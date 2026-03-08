@@ -2042,7 +2042,7 @@ async def upload_and_analyze(
 
     if median_freq_minutes < 50:
         logger.info(f"Sub-hourly data detected ({median_freq_minutes:.0f} min), aggregating to hourly")
-        df_clean['hour_floor'] = df_clean['hour_datetime'].dt.floor('H')
+        df_clean['hour_floor'] = df_clean['hour_datetime'].dt.floor('h')
         df_clean = df_clean.groupby('hour_floor').agg({en_col: 'mean'}).reset_index()
         df_clean = df_clean.rename(columns={'hour_floor': 'hour_datetime'})
         logger.info(f"After hourly aggregation: {len(df_clean)} rows")
