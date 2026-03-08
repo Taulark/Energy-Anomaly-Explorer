@@ -547,7 +547,10 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
         "timezone": "UTC",
     }
     try:
-        r = requests.get(url, params=params, timeout=60)
+        r = requests.get(url, params=params, timeout=120)
+        if r.status_code == 429:
+            time.sleep(5)
+            r = requests.get(url, params=params, timeout=120)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
