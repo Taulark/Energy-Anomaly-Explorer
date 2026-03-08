@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: energy-anomaly-explorer
+    runtime: python
+    buildCommand: bash build.sh
+    startCommand: cd backend && python main.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: NODE_VERSION
+        value: "20"

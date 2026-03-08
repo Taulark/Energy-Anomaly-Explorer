@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Frontend
+frontend/dist/
+frontend/.vite/
+
+# Backend
+backend/__pycache__/
+*.pyc
+
+# Large data files (generated on demand)
+*_load_weather_merged.csv
+data/merged/
+data/weather/
+*.csv.bak
+sample_upload_*.csv
+
+# Capstone data (not needed for deployment - app fetches from APIs)
+Weather data/
+LoadProfiles/
+Chicago_*.csv
+Houston_*.csv
+*_SimulatedLoadProfile.csv
+JMP_*
+*.xlsx
+*.pdf
+*.docx
+*.zip
+*.jmp
+city_coords_cache.json
+corr_output.xlsx
+.Rhistory
+
+# Temp/lock files
+~$*
+frontend/*.timestamp*.mjs
+frontend/postcss.config.js.bak
+
+# Test scripts
+qa_*.py
+test_*.py
