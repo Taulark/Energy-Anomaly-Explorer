@@ -76,7 +76,7 @@ def aggregate_load_profile(city: str, project_root: Path = None, load_file_path:
     hourly_load['hour_datetime'] = pd.date_range(
         '1998-01-01 00:00:00',
         periods=len(hourly_load),
-        freq='H'
+        freq='h'
     )
     
     # Ensure hour_datetime is datetime64[ns]
@@ -116,7 +116,7 @@ def merge_load_weather(
     # CRITICAL: hour_datetime must come from load_df (already created in aggregate_load_profile)
     # Ensure it's datetime64[ns] type and has no NaT values
     if 'hour_datetime' not in load_df.columns:
-        load_df['hour_datetime'] = pd.date_range('1998-01-01 00:00:00', periods=len(load_df), freq='H')
+        load_df['hour_datetime'] = pd.date_range('1998-01-01 00:00:00', periods=len(load_df), freq='h')
     
     # Ensure hour_datetime is proper datetime type
     load_df['hour_datetime'] = pd.to_datetime(load_df['hour_datetime'], errors='coerce')
