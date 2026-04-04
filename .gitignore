@@ -45,7 +45,8 @@ backend/__pycache__/
 *.pyc
 
 # Large data files (generated on demand)
-*_load_weather_merged.csv
+# Root-level merged outputs only (allow prebuilt_merged/*.csv for fast deploy)
+/*_load_weather_merged.csv
 data/merged/
 data/weather/
 *.csv.bak

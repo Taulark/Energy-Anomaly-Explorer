@@ -1010,14 +1010,68 @@ def ensure_load_profile_downloaded(city_display: str) -> Tuple[Optional[Path], O
         return None, str(e)
 
 
+def try_acquire_prebuilt_merged(city_key: str, dest_path: Path) -> Tuple[Optional[Path], Optional[str]]:
+    """
+    Fast path for first Run on hosting (Render): use a pre-merged load+weather CSV so we skip
+    weather APIs entirely.
+
+    1) Local file:   prebuilt_merged/{city_key}_load_weather_merged.csv  (copy into data/merged/)
+    2) Remote zip/cache: set env PREBUILT_MERGED_BASE_URL=https://.../my-folder
+       (we GET {BASE}/{city_key}_load_weather_merged.csv )
+
+    Returns (path, source_label) e.g. ("PREBUILT_LOCAL", "PREBUILT_URL") or (None, None).
+    """
+    import shutil
+    import requests
+
+    local_src = PROJECT_ROOT / "prebuilt_merged" / f"{city_key}_load_weather_merged.csv"
+    if local_src.is_file():
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_src, dest_path)
+            logger.info("Prebuilt merged (bundled): %s -> %s", local_src, dest_path)
+            return dest_path, "PREBUILT_LOCAL"
+        except Exception as e:
+            logger.warning("Could not copy bundled prebuilt merged CSV: %s", e)
+
+    base = (os.getenv("PREBUILT_MERGED_BASE_URL") or "").strip().rstrip("/")
+    if base:
+        url = f"{base}/{city_key}_load_weather_merged.csv"
+        tmp = dest_path.with_suffix(dest_path.suffix + ".download")
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            headers = {
+                "User-Agent": "EnergyAnomalyExplorer/1.0 (prebuilt merged fetch)",
+            }
+            with requests.get(url, stream=True, headers=headers, timeout=600) as r:
+                r.raise_for_status()
+                with open(tmp, "wb") as out:
+                    for chunk in r.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            out.write(chunk)
+            if tmp.stat().st_size < 5000:
+                tmp.unlink(missing_ok=True)
+                logger.warning("Prebuilt merged download too small from %s", url)
+                return None, None
+            tmp.replace(dest_path)
+            logger.info("Prebuilt merged (URL): %s -> %s", url, dest_path)
+            return dest_path, "PREBUILT_URL"
+        except Exception as e:
+            logger.warning("Prebuilt merged download failed (%s): %s", url, e)
+            tmp.unlink(missing_ok=True)
+
+    return None, None
+
+
 def ensure_city_prepared(city_display: str) -> Tuple[Optional[Path], Optional[str], Optional[str], Optional[str]]:
     """
     Ensure city data is prepared (merged CSV exists).
-    If not, run full pipeline: OpenEI download → weather (NSRDB or Open-Meteo fallback) → merge.
-    
+    If not: try prebuilt merged (local or PREBUILT_MERGED_BASE_URL), else full pipeline:
+    OpenEI download → weather (NSRDB or Open-Meteo) → merge.
+
     Returns:
         (merged_file_path, error_step, error_message, weather_source_used)
-        - weather_source_used: "NSRDB" | "OPEN_METEO" | "CACHE" | None
+        - weather_source_used: "NSRDB" | "OPEN_METEO" | "CACHE" | "PREBUILT_LOCAL" | "PREBUILT_URL" | None
     """
     logger.info(f"=== ensure_city_prepared START: city_display='{city_display}' ===")
     
@@ -1046,7 +1100,12 @@ def ensure_city_prepared(city_display: str) -> Tuple[Optional[Path], Optional[st
     if merged_file_new.exists():
         logger.info(f"Merged file already exists at new location: {merged_file_new}")
         return merged_file_new, None, None, "CACHE"
-    
+
+    prebuilt_path, prebuilt_label = try_acquire_prebuilt_merged(city_key, merged_file_new)
+    if prebuilt_path is not None and prebuilt_label is not None:
+        logger.info("Using prebuilt merged dataset (%s) — skipping weather download merge.", prebuilt_label)
+        return prebuilt_path, None, None, prebuilt_label
+
     logger.info(f"Merged file not found. Starting preparation pipeline for {city_display}...")
     
     # Step 1: Download load profile if needed (shared with fast /api/ensure-load-profile)
@@ -2750,7 +2809,11 @@ async def get_forecast(request: ForecastRequest):
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "modules_available": MODULES_AVAILABLE}
+    return {
+        "status": "ok",
+        "modules_available": MODULES_AVAILABLE,
+        "prebuilt_merged_url_configured": bool((os.getenv("PREBUILT_MERGED_BASE_URL") or "").strip()),
+    }
 
 
 # --- Production: serve React build if frontend/dist exists ---
