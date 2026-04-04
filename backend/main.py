@@ -187,6 +187,26 @@ class StatusResponse(BaseModel):
 # Cache for OpenEI city resources to avoid repeated fetches
 _openei_cities_cache = None
 
+# OpenEI submission 515 — static display -> canonical (avoids scraping data.openei.org on every cold start / Render).
+OPENEI_515_DISPLAY_TO_CANONICAL: Dict[str, str] = {
+    "Albuquerque NM": "Albuquerque",
+    "Atlanta GA": "Atlanta",
+    "Baltimore MD": "Baltimore",
+    "Boulder CO": "Boulder",
+    "Chicago IL": "Chicago",
+    "Duluth MN": "Duluth",
+    "Helena MT": "Helena",
+    "Houston TX": "Houston",
+    "Las Vegas NV": "Las Vegas",
+    "Los Angeles CA": "Los Angeles",
+    "Miami FL": "Miami",
+    "Minneapolis MN": "Minneapolis",
+    "Phoenix AZ": "Phoenix",
+    "San Francisco CA": "San Francisco",
+    "Seattle WA": "Seattle",
+}
+
+
 def get_canonical_city_key(city_display: str) -> Optional[str]:
     """
     Get canonical city key from OpenEI resources with robust matching.
@@ -205,6 +225,16 @@ def get_canonical_city_key(city_display: str) -> Optional[str]:
     if not MODULES_AVAILABLE:
         logger.warning("Modules not available, falling back to normalize_city_key")
         return normalize_city_key(city_display)
+
+    if city_display in OPENEI_515_DISPLAY_TO_CANONICAL:
+        ck = OPENEI_515_DISPLAY_TO_CANONICAL[city_display]
+        logger.info(f"get_canonical_city_key: '{city_display}' -> '{ck}' (static OpenEI 515 map)")
+        return ck
+    ni = normalize_city_name_for_matching(city_display)
+    for disp, ck in OPENEI_515_DISPLAY_TO_CANONICAL.items():
+        if normalize_city_name_for_matching(disp) == ni:
+            logger.info(f"get_canonical_city_key: '{city_display}' -> '{ck}' (static OpenEI 515 normalized match)")
+            return ck
     
     try:
         # Fetch OpenEI resources (cache after first call)
@@ -789,27 +819,44 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
     """
     import requests
     url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
-        "forecast_days": days,
-        "timezone": "UTC",
-    }
     headers = {"User-Agent": "EnergyAnomalyExplorer/1.0 (forecast)"}
-    try:
-        r = requests.get(url, params=params, headers=headers, timeout=120)
-        if r.status_code == 429:
-            time.sleep(5)
-            r = requests.get(url, params=params, headers=headers, timeout=120)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        logger.warning(f"Open-Meteo forecast request failed: {e}")
+    hourly_variants = [
+        "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
+        "temperature_2m,dew_point_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
+    ]
+    data = None
+    last_err: Optional[str] = None
+    for hourly in hourly_variants:
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": hourly,
+            "forecast_days": min(days, 16),
+            "timezone": "UTC",
+        }
+        for attempt in range(4):
+            try:
+                r = requests.get(url, params=params, headers=headers, timeout=90)
+                if r.status_code == 429:
+                    time.sleep(3 + attempt * 4)
+                    last_err = "429 rate limit"
+                    continue
+                r.raise_for_status()
+                data = r.json()
+                last_err = None
+                break
+            except Exception as e:
+                last_err = str(e)
+                logger.warning("Open-Meteo forecast attempt %s/%s failed: %s", attempt + 1, hourly[:40], e)
+                time.sleep(1.5 * (attempt + 1))
+        if data is not None:
+            break
+    if data is None:
+        logger.warning("Open-Meteo forecast failed after retries: %s", last_err)
         return None
     h = data.get("hourly", {})
     if not h or "time" not in h:
-        logger.warning("Open-Meteo forecast returned no hourly data")
+        logger.warning("Open-Meteo forecast returned no hourly block (keys=%s)", list(data.keys())[:12])
         return None
     times = h["time"]
     df = pd.DataFrame({
@@ -1650,7 +1697,11 @@ async def get_cities() -> CityResponse:
         import traceback
         error_details = traceback.format_exc()
         logger.error(f"Error fetching cities: {e}\n{error_details}")
-        raise HTTPException(status_code=500, detail=f"Error fetching cities: {str(e)}")
+        fb = sorted(OPENEI_515_DISPLAY_TO_CANONICAL.keys())
+        logger.warning("Using static OpenEI 515 city list fallback (%s cities)", len(fb))
+        cache["cities"] = fb
+        _save_cities_list_to_disk(fb)
+        return CityResponse(cities=fb)
 
 @app.post("/api/prepare-city")
 async def prepare_city(request: PrepareCityRequest, background_tasks: BackgroundTasks) -> StatusResponse:

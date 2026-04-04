@@ -18,14 +18,21 @@ import json
 # Must align with VALID_CITIES in app.py
 # Cities without coordinates will have weather download disabled but can still load if merged file exists
 CITY_COORDS = {
+    'albuquerque': (35.0844, -106.6504),
     'atlanta': (33.7490, -84.3880),
+    'baltimore': (39.2904, -76.6122),
     'boston': (42.3601, -71.0589),
+    'boulder': (40.0150, -105.2705),
     'chicago': (41.8781, -87.6298),
     'dallas': (32.7767, -96.7970),
     'denver': (39.7392, -104.9903),
+    'duluth': (46.7867, -92.1005),
+    'helena': (46.5887, -112.0245),
     'houston': (29.7604, -95.3698),
+    'las vegas': (36.1699, -115.1398),
     'los angeles': (34.0522, -118.2437),
     'miami': (25.7617, -80.1918),
+    'minneapolis': (44.9778, -93.2650),
     'new york': (40.7128, -74.0060),
     'phoenix': (33.4484, -112.0740),
     'san francisco': (37.7749, -122.4194),

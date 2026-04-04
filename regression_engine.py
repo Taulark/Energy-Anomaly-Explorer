@@ -469,8 +469,16 @@ def fit_regression(
         f"Invalid split: train={len(train_data)}, test={len(test_data)}"
     logger.info(f"Train/test split: train={len(train_data)}, test={len(test_data)}, split_idx={split_idx}")
     
-    X_train = train_data[selected_features].values
-    y_train = train_data[y_col].values
+    train_fit = train_data
+    if len(train_data) > 55_000:
+        train_fit = train_data.sample(n=48_000, random_state=42).sort_values(hour_datetime_col)
+        logger.info(
+            "fit_regression: subsampling train for ElasticNet.fit %s -> %s rows",
+            len(train_data),
+            len(train_fit),
+        )
+    X_train = train_fit[selected_features].values
+    y_train = train_fit[y_col].values
     X_test = test_data[selected_features].values
     y_test = test_data[y_col].values
     
@@ -577,7 +585,7 @@ def fit_regression(
             'y_pred': y_pred_full,
             'y_test': y_test,
             'y_test_pred': y_test_pred,
-            'train_size': len(train_data),
+            'train_size': len(train_fit),
             'test_size': len(test_data),
             'error': None,
             '_model': model,
