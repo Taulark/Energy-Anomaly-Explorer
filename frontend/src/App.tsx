@@ -36,10 +36,7 @@ function App() {
   const handlePrepareCity = async (city: string) => {
     setIsPreparing(true);
     try {
-      const status = await api.prepareCity(city);
-      if (status.ready) {
-        setSelectedCity(city);
-      }
+      const status = await api.ensureLoadProfile(city);
       return status;
     } finally {
       setIsPreparing(false);

@@ -608,7 +608,7 @@ def download_weather_openmeteo(
     if t0 > t1:
         t0, t1 = t1, t0
 
-    chunk_days = 370
+    chunk_days = 1000
     chunks: List[pd.DataFrame] = []
     chunk_start = t0
 
@@ -665,7 +665,7 @@ def download_weather_openmeteo(
             return None
         chunks.append(part)
         chunk_start = chunk_end + pd.Timedelta(days=1)
-        time.sleep(0.35)
+        time.sleep(0.05)
 
     if not chunks:
         return None
@@ -868,6 +868,52 @@ def resolve_city_coordinates(city_display: str) -> Tuple[float, float]:
             }
         )
 
+
+def ensure_load_profile_downloaded(city_display: str) -> Tuple[Optional[Path], Optional[str]]:
+    """
+    Ensure the OpenEI simulated load profile CSV exists (download if missing).
+    Does not fetch weather or build merged dataset — keeps city selection UI fast.
+    Returns (load_csv_path, None) on success, or (None, error_message).
+    """
+    if not MODULES_AVAILABLE:
+        return None, "Required modules not available"
+
+    canonical_key = get_canonical_city_key(city_display)
+    if not canonical_key:
+        return None, f"Could not determine canonical key for '{city_display}'"
+
+    load_file = PROJECT_ROOT / "LoadProfiles" / f"{canonical_key}_SimulatedLoadProfile.csv"
+    if not load_file.exists():
+        load_file = PROJECT_ROOT / f"{canonical_key}_SimulatedLoadProfile.csv"
+
+    if load_file.exists():
+        logger.info(f"Load profile already present: {load_file}")
+        return load_file, None
+
+    logger.info(f"Downloading load profile for '{city_display}' (canonical={canonical_key})...")
+    try:
+        cities_dict = fetch_openei_city_resources()
+        city_info = None
+        for _key, info in cities_dict.items():
+            if info.get("display") == city_display:
+                city_info = info
+                break
+        if not city_info:
+            return None, (
+                f"City '{city_display}' not found in OpenEI submission 515."
+            )
+        load_file = PROJECT_ROOT / "LoadProfiles" / f"{canonical_key}_SimulatedLoadProfile.csv"
+        load_file.parent.mkdir(parents=True, exist_ok=True)
+        success, msg = download_load_profile(city_display, city_info["url"], load_file)
+        if not success:
+            return None, f"Failed to download load profile: {msg}"
+        logger.info(f"Downloaded load profile: {load_file}")
+        return load_file, None
+    except Exception as e:
+        logger.exception("ensure_load_profile_downloaded failed")
+        return None, str(e)
+
+
 def ensure_city_prepared(city_display: str) -> Tuple[Optional[Path], Optional[str], Optional[str], Optional[str]]:
     """
     Ensure city data is prepared (merged CSV exists).
@@ -907,59 +953,11 @@ def ensure_city_prepared(city_display: str) -> Tuple[Optional[Path], Optional[st
     
     logger.info(f"Merged file not found. Starting preparation pipeline for {city_display}...")
     
-    if not MODULES_AVAILABLE:
-        error_msg = "Required modules not available"
-        logger.error(error_msg)
-        return None, "openei_download", error_msg, None
-    
-    # Step 1: Download load profile if needed
+    # Step 1: Download load profile if needed (shared with fast /api/ensure-load-profile)
     logger.info(f"=== Step 1: Load Profile Download ===")
-    try:
-        # Use canonical key for load profile filename (matches OpenEI naming)
-        load_file = PROJECT_ROOT / "LoadProfiles" / f"{canonical_key}_SimulatedLoadProfile.csv"
-        logger.info(f"Checking load file: {load_file}")
-        
-        if not load_file.exists():
-            # Fallback to project root (legacy)
-            load_file = PROJECT_ROOT / f"{canonical_key}_SimulatedLoadProfile.csv"
-            logger.info(f"Fallback check: {load_file} (exists: {load_file.exists()})")
-        
-        if not load_file.exists():
-            logger.info(f"Load profile not found. Fetching OpenEI resources...")
-            cities_dict = fetch_openei_city_resources()
-            logger.info(f"OpenEI resources fetched: {len(cities_dict)} cities")
-            
-            # Find city by display name
-            city_info = None
-            for key, info in cities_dict.items():
-                if info.get("display") == city_display:
-                    city_info = info
-                    logger.info(f"Found city info: canonical_key='{key}', display='{info.get('display')}', url='{info.get('url')}'")
-                    break
-            
-            if not city_info:
-                error_msg = f"City '{city_display}' not found in OpenEI submission 515. Available cities: {list(cities_dict.keys())[:5]}..."
-                logger.error(error_msg)
-                return None, "openei_download", error_msg, None
-            
-            # Download load profile using canonical key for filename
-            load_file = PROJECT_ROOT / "LoadProfiles" / f"{canonical_key}_SimulatedLoadProfile.csv"
-            load_file.parent.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Downloading load profile to: {load_file}")
-            logger.info(f"Download URL: {city_info['url']}")
-            
-            success, msg = download_load_profile(city_display, city_info["url"], load_file)
-            if not success:
-                error_msg = f"Failed to download load profile: {msg}"
-                logger.exception(error_msg)
-                return None, "openei_download", error_msg, None
-            logger.info(f"Downloaded load profile: {load_file}")
-        else:
-            logger.info(f"Load profile already exists: {load_file}")
-    except Exception as e:
-        error_msg = f"Error in load profile step: {str(e)}"
-        logger.exception(error_msg)
-        return None, "openei_download", error_msg, None
+    load_file, lp_err = ensure_load_profile_downloaded(city_display)
+    if lp_err or load_file is None:
+        return None, "openei_download", lp_err or "Load profile unavailable", None
     
     # Step 2: Get coordinates (robust resolution with geocoding fallback)
     logger.info(f"=== Step 2: Coordinates ===")
@@ -1529,6 +1527,23 @@ async def prepare_city(request: PrepareCityRequest, background_tasks: Background
         ready=True
     )
 
+
+@app.post("/api/ensure-load-profile")
+async def ensure_load_profile_endpoint(request: PrepareCityRequest) -> StatusResponse:
+    """
+    Fast path for the UI: ensure OpenEI load-profile CSV exists.
+    Full weather merge runs later on first Run (via load_merged_data).
+    """
+    path, err = ensure_load_profile_downloaded(request.city)
+    if err or path is None:
+        return StatusResponse(status="error", message=err or "Load profile failed", ready=False)
+    return StatusResponse(
+        status="ready",
+        message=f"Load profile ready for {request.city}",
+        ready=True,
+    )
+
+
 @app.get("/api/buildings")
 async def get_buildings(city: str) -> BuildingResponse:
     """
@@ -1596,32 +1611,48 @@ def _nsrdb_credentials_detail(city: str) -> dict:
 
 @app.get("/api/years")
 async def get_years(city: str, building: str) -> YearResponse:
-    """Get list of available years for a city and building. Auto-prepares city if needed."""
-    # Auto-prepare city if needed (ensure_city_prepared is called inside load_merged_data)
-    df, error_step, error_message, _ = load_merged_data(city)
+    """Get list of available years from load profile or cached merged data — does NOT run weather/merge."""
+    df, error_step, error_message, _source = get_buildings_from_available_data(city)
     if df is None:
-        # Return 400 (not 500) for expected failures like missing NSRDB creds
-        if error_step == "missing_nsrdb_credentials":
-            raise HTTPException(status_code=400, detail=_nsrdb_credentials_detail(city))
-        status_code = 400 if error_step in ("coords", "missing_nsrdb_credentials") else 500
+        status_code = 404 if error_step == "no_data_available" else 400
         raise HTTPException(
             status_code=status_code,
             detail={
-                "error": error_step or "prepare_failed",
+                "error": error_step or "no_data_available",
                 "city": city,
-                "step": error_step or "unknown",
-                "message": error_message or "Failed to load or prepare data"
-            }
+                "message": error_message or "No data for this city yet. Select city again or run load-profile step.",
+            },
         )
-    
+
     if building not in df.columns:
         raise HTTPException(status_code=400, detail=f"Building '{building}' not found in data")
-    
-    # Extract unique years from hour_datetime
-    if 'hour_datetime' not in df.columns:
-        raise HTTPException(status_code=400, detail="hour_datetime column not found")
-    
-    years = sorted(df['hour_datetime'].dt.year.unique().tolist())
+
+    canonical_key = get_canonical_city_key(city)
+    city_key = canonical_key.lower() if canonical_key else normalize_city_key(city)
+    if (
+        "hour_datetime" not in df.columns
+        or df["hour_datetime"].isna().all()
+        or not pd.api.types.is_datetime64_any_dtype(df["hour_datetime"])
+    ):
+        df, _strategy, error_info = robust_parse_datetime(
+            df.copy(), city_key, PROJECT_ROOT / f"{city_key}_years_scratch.csv"
+        )
+        if error_info:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "read_csv",
+                    "message": "Could not parse timestamps for year list.",
+                },
+            )
+    else:
+        df = df.copy()
+        df["hour_datetime"] = pd.to_datetime(df["hour_datetime"], errors="coerce")
+
+    if "hour_datetime" not in df.columns or df["hour_datetime"].isna().all():
+        raise HTTPException(status_code=400, detail="hour_datetime column not found or invalid")
+
+    years = sorted(df["hour_datetime"].dt.year.dropna().unique().astype(int).tolist())
     logger.info(f"Returning {len(years)} years for {city}/{building}: {years[:5]}...")
     return YearResponse(years=years)
 

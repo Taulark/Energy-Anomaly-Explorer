@@ -121,7 +121,7 @@ export default function Sidebar({
       console.log(`[Frontend] Fetching buildings for city: "${selectedCity}"`);
       return api.getBuildings(selectedCity);
     },
-    enabled: !!selectedCity,
+    enabled: !!selectedCity && !isPreparing,
     staleTime: 1000 * 60 * 30,
     retry: 1,
     retryDelay: 2000,
@@ -444,7 +444,7 @@ export default function Sidebar({
               ))}
             </select>
             {isPreparing && selectedCity && (
-              <div className="mt-2 text-xs text-yellow-500">Preparing city data...</div>
+              <div className="mt-2 text-xs text-yellow-500">Fetching load profile (fast)...</div>
             )}
           </div>
 
@@ -462,7 +462,7 @@ export default function Sidebar({
                 className="w-full bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">
-                  {isPreparing ? 'Preparing city data...' : buildingsLoading ? 'Loading buildings...' : 'Select Building'}
+                  {isPreparing ? 'Waiting for load profile...' : buildingsLoading ? 'Loading buildings...' : 'Select Building'}
                 </option>
                 {buildings.map((building) => (
                   <option key={building} value={building}>

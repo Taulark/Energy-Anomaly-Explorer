@@ -73,6 +73,12 @@ export const api = {
     return response.data;
   },
 
+  /** Fast: OpenEI CSV only. Full weather merge runs on first Run analysis. */
+  ensureLoadProfile: async (city: string): Promise<Status> => {
+    const response = await client.post<Status>('/api/ensure-load-profile', { city });
+    return response.data;
+  },
+
   getBuildings: async (city: string): Promise<string[]> => {
     const response = await client.get<Building>(`/api/buildings?city=${encodeURIComponent(city)}`);
     return response.data.buildings;
