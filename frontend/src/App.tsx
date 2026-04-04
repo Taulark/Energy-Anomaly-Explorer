@@ -4,6 +4,7 @@ import HeroHeader from './components/HeroHeader';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import MobileTopBar from './components/MobileTopBar';
+import SiteFooter from './components/SiteFooter';
 import { api } from './api/client';
 
 const queryClient = new QueryClient({
@@ -139,7 +140,10 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="flex min-h-[100dvh] flex-col bg-gradient-to-br from-[#0f0f23] to-[#1a1a2e] md:flex-row">
+      <div
+        id="app-top"
+        className="flex min-h-[100dvh] flex-col bg-gradient-to-br from-[#0f0f23] to-[#1a1a2e] md:flex-row md:items-stretch"
+      >
         <Sidebar
           selectedCity={selectedCity}
           setSelectedCity={setSelectedCity}
@@ -189,6 +193,7 @@ function App() {
             </div>
           )}
           <MainContent results={results} isRunning={isRunning} />
+          <SiteFooter />
         </div>
       </div>
     </QueryClientProvider>

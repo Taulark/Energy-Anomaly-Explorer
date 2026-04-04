@@ -238,7 +238,7 @@ export default function Sidebar({
         onClick={onCloseMobileDrawer}
       />
       <aside
-        className={`fixed top-0 left-0 z-50 h-[100dvh] w-[min(20rem,92vw)] max-w-sm overflow-y-auto border-r border-[#2d2d44] bg-[#1e1e2e] p-4 shadow-xl transition-transform duration-200 ease-out md:static md:z-0 md:block md:h-screen md:w-64 md:max-w-none md:shrink-0 md:translate-x-0 md:shadow-none md:transition-none ${
+        className={`fixed top-0 left-0 z-50 h-[100dvh] w-[min(20rem,92vw)] max-w-sm overflow-y-auto border-r border-[#2d2d44] bg-[#1e1e2e] p-4 shadow-xl transition-transform duration-200 ease-out md:static md:z-0 md:block md:h-auto md:min-h-[100dvh] md:w-64 md:max-w-none md:shrink-0 md:self-stretch md:translate-x-0 md:shadow-none md:transition-none ${
           mobileDrawerOpen ? '' : '-translate-x-full'
         } pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]`}
       >
