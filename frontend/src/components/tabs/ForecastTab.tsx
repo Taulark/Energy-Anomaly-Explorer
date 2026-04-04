@@ -93,6 +93,18 @@ export default function ForecastTab({ results }: ForecastTabProps) {
 
   const hourlyData = forecast.hourly_forecast || [];
   const dailySummary = forecast.daily_summary || [];
+
+  if (hourlyData.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+        <AlertTriangle className="w-8 h-8 text-amber-400" />
+        <p className="text-sm text-gray-400">No hourly forecast data returned.</p>
+        <p className="max-w-md text-xs text-gray-600">
+          The forecast API responded but had no rows. Try running analysis again, or check the network tab if you are demoing locally.
+        </p>
+      </div>
+    );
+  }
   const modelR2 = forecast.r2;
   const residualStd = forecast.residual_std;
   const wxSource = forecast.forecast_weather_source as string | undefined;

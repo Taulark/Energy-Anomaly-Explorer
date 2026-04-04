@@ -90,7 +90,9 @@ export const api = {
   },
 
   runAnalysis: async (request: RunRequest): Promise<AnomalyResult> => {
-    const response = await client.post<AnomalyResult>('/api/run', request);
+    const response = await client.post<AnomalyResult>('/api/run', request, {
+      timeout: 600_000,
+    });
     return response.data;
   },
 
