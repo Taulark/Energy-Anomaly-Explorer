@@ -147,7 +147,7 @@ export const api = {
       city,
       building,
       forecast_days: forecastDays,
-    }, { timeout: 60000 });
+    }, { timeout: 180000 });
     return response.data;
   },
 

@@ -71,11 +71,14 @@ export default function ForecastTab({ results }: ForecastTabProps) {
   }
 
   if (error) {
+    const isNoModel = error.toLowerCase().includes('run analysis first');
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <AlertTriangle className="w-8 h-8 text-yellow-400" />
         <span className="text-gray-400 text-sm">{error}</span>
-        <span className="text-gray-500 text-xs">Run the analysis first, then come back to this tab.</span>
+        {isNoModel && (
+          <span className="text-gray-500 text-xs">Run the analysis first, then come back to this tab.</span>
+        )}
       </div>
     );
   }

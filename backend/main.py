@@ -796,11 +796,12 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
         "forecast_days": days,
         "timezone": "UTC",
     }
+    headers = {"User-Agent": "EnergyAnomalyExplorer/1.0 (forecast)"}
     try:
-        r = requests.get(url, params=params, timeout=120)
+        r = requests.get(url, params=params, headers=headers, timeout=120)
         if r.status_code == 429:
             time.sleep(5)
-            r = requests.get(url, params=params, timeout=120)
+            r = requests.get(url, params=params, headers=headers, timeout=120)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
@@ -1947,6 +1948,17 @@ async def run_analysis(request: RunRequest) -> Dict[str, Any]:
     
     if fit_result.get("_model") and fit_result.get("_scaler"):
         cache_key = f"{request.city}|{building}"
+        forecast_lat: Optional[float] = None
+        forecast_lon: Optional[float] = None
+        try:
+            forecast_lat, forecast_lon = resolve_city_coordinates(city)
+        except HTTPException:
+            logger.warning(
+                "Could not resolve coordinates for forecast cache (city=%r); forecast tab will geocode on demand.",
+                city,
+            )
+        except Exception as e:
+            logger.warning("Coordinate lookup for forecast cache failed: %s", e)
         cache["model_cache"][cache_key] = {
             "model": fit_result["_model"],
             "scaler": fit_result["_scaler"],
@@ -1955,6 +1967,8 @@ async def run_analysis(request: RunRequest) -> Dict[str, Any]:
             "r2": r2,
             "city": request.city,
             "building": building,
+            "lat": forecast_lat,
+            "lon": forecast_lon,
         }
         logger.info(f"Cached model for forecast: {cache_key}")
         persist_model_for_forecast(request.city, building, cache["model_cache"][cache_key])
@@ -2728,11 +2742,23 @@ async def get_forecast(request: ForecastRequest):
     residual_std = model_data.get("residual_std", 0)
     r2 = model_data.get("r2", 0)
 
-    if "lat" in model_data and "lon" in model_data:
-        lat, lon = model_data["lat"], model_data["lon"]
+    md_lat = model_data.get("lat")
+    md_lon = model_data.get("lon")
+    coords_ok = (
+        md_lat is not None
+        and md_lon is not None
+        and isinstance(md_lat, (int, float))
+        and isinstance(md_lon, (int, float))
+        and bool(np.isfinite(md_lat))
+        and bool(np.isfinite(md_lon))
+    )
+    if coords_ok:
+        lat, lon = float(md_lat), float(md_lon)
     else:
         try:
             lat, lon = resolve_city_coordinates(request.city)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail={"error": "geocoding_failed", "message": str(e)})
 
