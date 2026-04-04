@@ -242,21 +242,34 @@ def select_weather_features(
     
     if method == "elasticnet":
         try:
-            # Standardize features
+            # Feature selection only: subsample very large series so ElasticNetCV stays fast.
+            # Final regression in fit_regression() still uses the full dataset.
+            MAX_ROWS_ENET_SELECT = 48_000
+            n_total = len(data_clean)
+            data_enet = data_clean
+            if n_total > MAX_ROWS_ENET_SELECT:
+                idx = np.unique(
+                    np.linspace(0, n_total - 1, MAX_ROWS_ENET_SELECT, dtype=int)
+                )
+                data_enet = data_enet.iloc[idx].copy().reset_index(drop=True)
+            X_sel = data_enet[candidates].values
+            y_sel = data_enet[y_col].values
+            selection_note = {"selection_rows_used": len(data_enet), "selection_rows_total": n_total}
+
             scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
+            X_scaled = scaler.fit_transform(X_sel)
             
-            # Use ElasticNetCV for automatic alpha selection
-            # Alpha range: 0.01 to 1.0 (regularization strength)
-            alphas = np.logspace(-2, 0, 10)  # 0.01 to 1.0
+            # Fewer CV folds / alphas than before: same role (pick sparsity), much faster on big n.
+            alphas = np.logspace(-2, 0, 8)
             model = ElasticNetCV(
                 alphas=alphas,
-                l1_ratio=[0.1, 0.5, 0.7, 0.9, 0.95, 0.99],  # Mix of L1/L2
-                cv=5,
-                max_iter=1000,
-                random_state=42
+                l1_ratio=[0.1, 0.5, 0.7, 0.9, 0.95],
+                cv=3,
+                max_iter=800,
+                random_state=42,
+                n_jobs=-1,
             )
-            model.fit(X_scaled, y)
+            model.fit(X_scaled, y_sel)
             
             # Get selected features (non-zero coefficients)
             selected_indices = np.where(np.abs(model.coef_) > 1e-6)[0]
@@ -266,7 +279,8 @@ def select_weather_features(
                 'alpha': model.alpha_,
                 'l1_ratio': model.l1_ratio_,
                 'coefficients': {candidates[i]: model.coef_[i] for i in selected_indices},
-                'n_selected': len(selected_features)
+                'n_selected': len(selected_features),
+                **selection_note,
             }
             
             # Build correlations dict for candidate_features_df (use train set)
@@ -467,7 +481,14 @@ def fit_regression(
         X_test_scaled = scaler.transform(X_test)
         
         # Fit ElasticNet (use same approach as selection for consistency)
-        model = ElasticNet(alpha=0.1, l1_ratio=0.5, max_iter=1000, random_state=42)
+        model = ElasticNet(
+            alpha=0.1,
+            l1_ratio=0.5,
+            max_iter=800,
+            tol=1e-3,
+            random_state=42,
+            selection="random",
+        )
         model.fit(X_train_scaled, y_train)
         
         # Predictions
