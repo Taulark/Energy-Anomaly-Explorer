@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import HeroHeader from './components/HeroHeader';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
+import MobileTopBar from './components/MobileTopBar';
 import { api } from './api/client';
 
 const queryClient = new QueryClient({
@@ -32,6 +33,26 @@ function App() {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [isPreparing, setIsPreparing] = useState<boolean>(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => {
+      if (mq.matches) setMobileMenuOpen(false);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    if (!mq.matches || !mobileMenuOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileMenuOpen]);
 
   const handlePrepareCity = async (city: string) => {
     setIsPreparing(true);
@@ -128,49 +149,56 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen bg-gradient-to-br from-[#0f0f23] to-[#1a1a2e]">
-        <div className="flex">
-          <Sidebar
-            selectedCity={selectedCity}
-            setSelectedCity={setSelectedCity}
-            selectedBuilding={selectedBuilding}
-            setSelectedBuilding={setSelectedBuilding}
-            zThreshold={zThreshold}
-            setZThreshold={setZThreshold}
-            topN={topN}
-            setTopN={setTopN}
-            selectedYear={selectedYear}
-            setSelectedYear={setSelectedYear}
-            featureMode={featureMode}
-            setFeatureMode={setFeatureMode}
-            topK={topK}
-            setTopK={setTopK}
-            includeCloudType={includeCloudType}
-            setIncludeCloudType={setIncludeCloudType}
-            electricityRate={electricityRate}
-            setElectricityRate={setElectricityRate}
-            enableInsights={enableInsights}
-            setEnableInsights={setEnableInsights}
-            enableRecurrence={enableRecurrence}
-            setEnableRecurrence={setEnableRecurrence}
-            enableCostEstimates={enableCostEstimates}
-            setEnableCostEstimates={setEnableCostEstimates}
-            onPrepareCity={handlePrepareCity}
-            onRun={handleRun}
-            onUploadRun={handleUploadRun}
-            isRunning={isRunning}
-            isPreparing={isPreparing}
-            results={results}
+      <div className="flex min-h-[100dvh] flex-col bg-gradient-to-br from-[#0f0f23] to-[#1a1a2e] md:flex-row">
+        <Sidebar
+          selectedCity={selectedCity}
+          setSelectedCity={setSelectedCity}
+          selectedBuilding={selectedBuilding}
+          setSelectedBuilding={setSelectedBuilding}
+          zThreshold={zThreshold}
+          setZThreshold={setZThreshold}
+          topN={topN}
+          setTopN={setTopN}
+          selectedYear={selectedYear}
+          setSelectedYear={setSelectedYear}
+          featureMode={featureMode}
+          setFeatureMode={setFeatureMode}
+          topK={topK}
+          setTopK={setTopK}
+          includeCloudType={includeCloudType}
+          setIncludeCloudType={setIncludeCloudType}
+          electricityRate={electricityRate}
+          setElectricityRate={setElectricityRate}
+          enableInsights={enableInsights}
+          setEnableInsights={setEnableInsights}
+          enableRecurrence={enableRecurrence}
+          setEnableRecurrence={setEnableRecurrence}
+          enableCostEstimates={enableCostEstimates}
+          setEnableCostEstimates={setEnableCostEstimates}
+          onPrepareCity={handlePrepareCity}
+          onRun={handleRun}
+          onUploadRun={handleUploadRun}
+          isRunning={isRunning}
+          isPreparing={isPreparing}
+          results={results}
+          mobileDrawerOpen={mobileMenuOpen}
+          onCloseMobileDrawer={() => setMobileMenuOpen(false)}
+        />
+        <div className="flex min-w-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
+          <MobileTopBar
+            onOpenMenu={() => setMobileMenuOpen(true)}
+            onScrollTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
           />
-          <div className="flex-1 ml-64">
-            <HeroHeader />
-            {runError && (
-              <div className="mx-6 mt-4 p-4 bg-amber-900/30 border border-amber-600/50 rounded-lg text-amber-200 text-sm whitespace-pre-wrap" role="alert">
-                {runError}
-              </div>
-            )}
-            <MainContent results={results} isRunning={isRunning} />
-          </div>
+          <p className="border-b border-[#2d2d44]/50 px-4 py-2 text-center text-[11px] leading-snug text-slate-500 md:hidden">
+            Advanced anomaly detection for building energy load profiles
+          </p>
+          <HeroHeader />
+          {runError && (
+            <div className="mx-4 mt-4 rounded-lg border border-amber-600/50 bg-amber-900/30 p-4 text-sm text-amber-200 whitespace-pre-wrap md:mx-6" role="alert">
+              {runError}
+            </div>
+          )}
+          <MainContent results={results} isRunning={isRunning} />
         </div>
       </div>
     </QueryClientProvider>

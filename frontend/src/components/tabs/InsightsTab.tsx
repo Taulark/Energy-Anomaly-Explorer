@@ -339,7 +339,7 @@ export default function InsightsTab({ results }: InsightsTabProps) {
         <div>
           <h2 className="text-xl font-semibold text-white mb-4">Cost Impact Estimate</h2>
           <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <div className="text-xs text-gray-400 mb-1">Excess Energy</div>
                 <div className="text-lg font-semibold text-red-400">

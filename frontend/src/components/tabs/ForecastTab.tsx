@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { ShieldAlert, Zap, Loader2, AlertTriangle, ThermometerSun } from 'lucide-react';
 import { api } from '../../api/client';
+import { useIsMobileLayout } from '../../hooks/useMediaQuery';
 
 interface ForecastTabProps {
   results: any;
@@ -38,6 +39,11 @@ function getRiskLevel(temp: number, ghi: number, avgTemp: number): { level: stri
 }
 
 export default function ForecastTab({ results }: ForecastTabProps) {
+  const isMobile = useIsMobileLayout();
+  const chartMainH = isMobile ? 300 : 400;
+  const chartBarH = isMobile ? 220 : 280;
+  const xAxisInterval = isMobile ? 47 : 23;
+
   const [forecast, setForecast] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,7 +160,7 @@ export default function ForecastTab({ results }: ForecastTabProps) {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <div className="flex items-center gap-2 text-gray-400 text-xs mb-1">
             <ShieldAlert className="w-3.5 h-3.5 text-red-400" /> High Risk Hours
@@ -191,8 +197,8 @@ export default function ForecastTab({ results }: ForecastTabProps) {
         <p className="text-[10px] text-gray-500 mb-4">
           Shaded band = normal range. Any actual consumption outside this band would be flagged as an anomaly.
         </p>
-        <ResponsiveContainer width="100%" height={400}>
-          <AreaChart data={chartData} margin={{ top: 5, right: 20, bottom: 28, left: 40 }}>
+        <ResponsiveContainer width="100%" height={chartMainH}>
+          <AreaChart data={chartData} margin={{ top: 5, right: isMobile ? 8 : 20, bottom: 28, left: isMobile ? 4 : 40 }}>
             <defs>
               <linearGradient id="fGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
@@ -211,9 +217,9 @@ export default function ForecastTab({ results }: ForecastTabProps) {
                 const d = new Date(v);
                 return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: 'numeric' });
               }}
-              tick={{ fontSize: 10 }} interval={23}
+              tick={{ fontSize: isMobile ? 8 : 10 }} interval={xAxisInterval} minTickGap={isMobile ? 40 : 20}
             />
-            <YAxis stroke="#9aa0a6" label={{ value: 'kWh', angle: -90, position: 'insideLeft', style: { fill: '#9aa0a6' } }} />
+            <YAxis stroke="#9aa0a6" width={isMobile ? 36 : 60} tick={{ fontSize: isMobile ? 9 : 12 }} label={isMobile ? undefined : { value: 'kWh', angle: -90, position: 'insideLeft', style: { fill: '#9aa0a6' } }} />
             <Tooltip
               contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} labelStyle={TOOLTIP_LABEL}
               labelFormatter={(v) => new Date(v).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
@@ -228,23 +234,31 @@ export default function ForecastTab({ results }: ForecastTabProps) {
             <Area type="monotone" dataKey="predicted_kwh" stroke="#3b82f6" strokeWidth={2} fill="url(#fGrad)" name="Expected Baseline" />
           </AreaChart>
         </ResponsiveContainer>
-        <div className="flex items-center justify-center gap-6 mt-2 text-[10px] text-gray-500">
+        <div className="mt-2 flex flex-col items-center justify-center gap-2 text-[10px] text-gray-500 sm:flex-row sm:gap-6">
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500 inline-block" /> Expected Baseline</span>
           <span className="flex items-center gap-1"><span className="w-6 h-0 border-t border-dashed border-green-500 inline-block" /> Normal Range (±{residualStd > 0 ? residualStd.toFixed(0) : '?'} kWh)</span>
-          <span className="text-gray-600">Anything outside = potential anomaly</span>
+          <span className="hidden text-gray-600 sm:inline">Anything outside = potential anomaly</span>
         </div>
       </div>
 
       {/* Row: Daily Risk + Risk Table */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Daily Risk Bar */}
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-300 mb-4">Daily Anomaly Risk Score</h3>
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={chartBarH}>
             <BarChart data={dailyRiskData} margin={{ top: 5, right: 10, bottom: 5, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" vertical={false} />
-              <XAxis dataKey="label" stroke="#9aa0a6" tick={{ fontSize: 11 }} />
-              <YAxis stroke="#9aa0a6" label={{ value: 'Risk Score', angle: -90, position: 'insideLeft', style: { fill: '#9aa0a6', fontSize: 10 } }} />
+              <XAxis
+                dataKey="label"
+                stroke="#9aa0a6"
+                tick={{ fontSize: isMobile ? 9 : 11 }}
+                interval={isMobile ? 0 : 'preserveStartEnd'}
+                angle={isMobile ? -35 : 0}
+                textAnchor={isMobile ? 'end' : 'middle'}
+                height={isMobile ? 50 : 30}
+              />
+              <YAxis stroke="#9aa0a6" width={isMobile ? 28 : undefined} tick={{ fontSize: isMobile ? 9 : 11 }} label={isMobile ? undefined : { value: 'Risk Score', angle: -90, position: 'insideLeft', style: { fill: '#9aa0a6', fontSize: 10 } }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM} labelStyle={TOOLTIP_LABEL}
                 formatter={(value: any, name: string) => {
                   if (name === 'Risk Score') return [value, 'Risk Score'];
@@ -302,7 +316,7 @@ export default function ForecastTab({ results }: ForecastTabProps) {
       {/* How to read this section */}
       <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
         <h3 className="text-sm font-semibold text-gray-300 mb-3">How to Use This Forecast</h3>
-        <div className="grid grid-cols-3 gap-4 text-xs text-gray-400">
+        <div className="grid grid-cols-1 gap-4 text-xs text-gray-400 md:grid-cols-3">
           <div>
             <p className="text-white font-medium mb-1">The Baseline</p>
             <p>The blue line shows what your building <em>should</em> consume based on the 7-day weather forecast, using the same regression model from your analysis.</p>

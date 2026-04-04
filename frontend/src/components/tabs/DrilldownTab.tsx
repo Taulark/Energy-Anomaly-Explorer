@@ -2,6 +2,7 @@ import {
   ComposedChart, Line, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceLine, BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
+import { useIsMobileLayout } from '../../hooks/useMediaQuery';
 
 interface DrilldownTabProps {
   results: any;
@@ -51,6 +52,11 @@ const TOOLTIP_ITEM_STYLE = { color: '#e2e8f0' };
 const TOOLTIP_LABEL_STYLE = { color: '#94a3b8' };
 
 export default function DrilldownTab({ results }: DrilldownTabProps) {
+  const isMobile = useIsMobileLayout();
+  const hMain = isMobile ? 300 : 400;
+  const hRes = isMobile ? 260 : 370;
+  const hSmall = isMobile ? 200 : 260;
+
   const drilldownData = results.drilldown_anomalies || results.top_anomalies;
   if (!results || !drilldownData || drilldownData.length === 0) return null;
 
@@ -169,9 +175,9 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold text-white">Building Drilldown</h2>
-        <span className="text-xs text-gray-400">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-lg font-semibold text-white sm:text-xl">Building Drilldown</h2>
+        <span className="text-[11px] text-gray-400 sm:text-xs">
           Year: {yearFilterUsed} · {topAnomalies.length} anomalies · {chartDataFormatted.length.toLocaleString()} pts
         </span>
       </div>
@@ -179,13 +185,14 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
       {/* ── Actual vs Predicted ── */}
       <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
         <h3 className="text-sm font-semibold text-gray-300 mb-4">Actual vs Predicted Load (Anomalies Highlighted)</h3>
-        <ResponsiveContainer width="100%" height={400}>
-          <ComposedChart data={chartDataFormatted} margin={{ top: 20, right: 30, bottom: 35, left: 25 }}>
+        <ResponsiveContainer width="100%" height={hMain}>
+          <ComposedChart data={chartDataFormatted} margin={{ top: 20, right: isMobile ? 12 : 30, bottom: 35, left: isMobile ? 4 : 25 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" />
             <XAxis dataKey="datetime" stroke="#9aa0a6" type="number" scale="time"
               domain={xAxisDomain} padding={{ left: 20, right: 20 }}
-              tickFormatter={(v) => new Date(v).toLocaleDateString()} />
-            <YAxis stroke="#9aa0a6" width={50} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.1)]} />
+              tickFormatter={(v) => new Date(v).toLocaleDateString()} tick={{ fontSize: isMobile ? 9 : 12 }} minTickGap={isMobile ? 48 : 24}
+            />
+            <YAxis stroke="#9aa0a6" width={isMobile ? 36 : 50} tick={{ fontSize: isMobile ? 9 : 12 }} domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.1)]} />
             <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
               labelFormatter={(v) => new Date(v).toLocaleString()} />
             <Legend verticalAlign="bottom" align="center" wrapperStyle={{ paddingTop: 12 }} />
@@ -200,13 +207,15 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
       {/* ── Residuals over Time ── */}
       <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
         <h3 className="text-sm font-semibold text-gray-300 mb-4">Residuals over Time</h3>
-        <ResponsiveContainer width="100%" height={370}>
-          <ComposedChart data={chartDataFormatted} margin={{ top: 20, right: 30, bottom: 35, left: 64 }}>
+        <ResponsiveContainer width="100%" height={hRes}>
+          <ComposedChart data={chartDataFormatted} margin={{ top: 20, right: isMobile ? 12 : 30, bottom: 35, left: isMobile ? 40 : 64 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" />
             <XAxis dataKey="datetime" stroke="#9aa0a6" type="number" scale="time"
               domain={xAxisDomain} padding={{ left: 20, right: 20 }}
-              tickFormatter={(v) => new Date(v).toLocaleDateString()} />
-            <YAxis stroke="#9aa0a6" domain={yAxisDomain} allowDataOverflow={false} tickFormatter={formatYTick} />
+              tickFormatter={(v) => new Date(v).toLocaleDateString()} tick={{ fontSize: isMobile ? 9 : 12 }} minTickGap={isMobile ? 48 : 24}
+            />
+            <YAxis stroke="#9aa0a6" width={isMobile ? 36 : 60} domain={yAxisDomain} allowDataOverflow={false} tickFormatter={formatYTick} tick={{ fontSize: isMobile ? 9 : 12 }}
+            />
             <Tooltip contentStyle={CUSTOM_TOOLTIP_STYLE} itemStyle={TOOLTIP_ITEM_STYLE} labelStyle={TOOLTIP_LABEL_STYLE}
               labelFormatter={(v) => new Date(v).toLocaleString()}
               formatter={(value: any, name: string) => {
@@ -224,11 +233,11 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
       </div>
 
       {/* ── Row: Hourly + Monthly Distribution ── */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Anomalies by Hour */}
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-300 mb-4">Anomalies by Hour of Day</h3>
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={hSmall}>
             <BarChart data={hourData} margin={{ top: 15, right: 10, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" vertical={false} />
               <XAxis dataKey="hour" stroke="#9aa0a6" tick={{ fontSize: 10 }} interval={2} />
@@ -252,7 +261,7 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
         {/* Anomalies by Month */}
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-300 mb-4">Monthly Anomaly Distribution</h3>
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={hSmall}>
             <BarChart data={monthData} margin={{ top: 15, right: 10, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" vertical={false} />
               <XAxis dataKey="month" stroke="#9aa0a6" tick={{ fontSize: 11 }} />
@@ -278,11 +287,11 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
       </div>
 
       {/* ── Row: Severity Histogram + Cause/Day Breakdown ── */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Z-Score Severity Distribution */}
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-300 mb-4">Anomaly Severity Distribution</h3>
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={hSmall}>
             <BarChart data={severityBins} margin={{ top: 15, right: 10, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#2d2d44" vertical={false} />
               <XAxis dataKey="range" stroke="#9aa0a6" tick={{ fontSize: 11 }} />
@@ -305,8 +314,8 @@ export default function DrilldownTab({ results }: DrilldownTabProps) {
         {/* Cause Breakdown / Day-of-Week Pie */}
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
           <h3 className="text-sm font-semibold text-gray-300 mb-4">{pieTitle}</h3>
-          <div className="flex items-center gap-4">
-            <div className="flex-shrink-0" style={{ width: 200, height: 200 }}>
+          <div className="flex flex-col items-center gap-4 md:flex-row">
+            <div className="h-[220px] w-[220px] max-w-full shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie

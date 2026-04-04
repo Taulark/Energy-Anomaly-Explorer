@@ -17,7 +17,7 @@ export default function RegressionTab({ results }: RegressionTabProps) {
       <div>
         <h2 className="text-xl font-semibold text-white mb-4">Model Summary</h2>
         <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:gap-4">
             <div>
               <div className="text-xs text-gray-400 mb-1">Selected Features</div>
               <div className="text-lg font-semibold text-white">
@@ -77,7 +77,8 @@ export default function RegressionTab({ results }: RegressionTabProps) {
         <div>
           <h2 className="text-xl font-semibold text-white mb-4">Coefficients</h2>
           <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto -mx-1">
+            <table className="w-full min-w-[520px] text-sm">
               <thead>
                 <tr className="border-b border-[#2d2d44]">
                   <th className="text-left py-2 text-gray-400">Feature</th>
@@ -103,6 +104,7 @@ export default function RegressionTab({ results }: RegressionTabProps) {
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="mt-3 text-xs text-gray-500">
               <span className="font-medium">Coefficient</span>: change in load per unit change in feature.{' '}
               <span className="font-medium">Std. Coefficient</span>: change in load per one standard deviation change (comparable across features).

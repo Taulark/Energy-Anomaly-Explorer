@@ -16,9 +16,9 @@ export default function TopAnomaliesTab({ results }: TopAnomaliesTabProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold text-white">{tableTitle}</h2>
-        <span className="text-xs text-gray-400">Z-threshold: {zThresholdUsed.toFixed(1)}</span>
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-lg font-semibold text-white sm:text-xl">{tableTitle}</h2>
+        <span className="shrink-0 text-xs text-gray-400">Z-threshold: {zThresholdUsed.toFixed(1)}</span>
       </div>
       
       <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-4">

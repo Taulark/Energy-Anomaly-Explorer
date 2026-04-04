@@ -6,6 +6,15 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        loadbar: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(350%)' },
+        },
+      },
+      animation: {
+        loadbar: 'loadbar 1.4s ease-in-out infinite',
+      },
       colors: {
         dark: {
           bg: '#0f0f23',

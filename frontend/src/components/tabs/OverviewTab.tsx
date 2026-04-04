@@ -136,7 +136,7 @@ export default function OverviewTab({ results }: OverviewTabProps) {
       {/* KPI Cards */}
       <div>
         <h2 className="text-xl font-semibold text-white mb-4">Key Metrics</h2>
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
           {metrics.map((metric, idx) => (
             <div
               key={idx}
@@ -158,7 +158,7 @@ export default function OverviewTab({ results }: OverviewTabProps) {
       </div>
 
       {/* Building Health + Model Confidence */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Health Grade */}
         <div className={`${health.bg} border ${health.border} rounded-xl p-5`}>
           <div className="flex items-center gap-3 mb-3">
@@ -217,7 +217,7 @@ export default function OverviewTab({ results }: OverviewTabProps) {
       {topAnomalies.length > 0 && (
         <div>
           <h2 className="text-xl font-semibold text-white mb-4">Anomaly Patterns at a Glance</h2>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
             <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-xl p-4 flex items-start gap-3">
               <Clock size={20} className="text-blue-400 mt-0.5 flex-shrink-0" />
               <div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { Activity, Building2, Target, Settings, Lightbulb, TrendingUp, CheckCircle2, Clock, AlertCircle, Upload, MapPin, FileSpreadsheet } from 'lucide-react';
+import { Activity, Building2, Target, Settings, Lightbulb, TrendingUp, CheckCircle2, Clock, AlertCircle, Upload, MapPin, FileSpreadsheet, X } from 'lucide-react';
 
 type DataMode = 'sample' | 'upload';
 
@@ -44,6 +44,8 @@ interface SidebarProps {
   isRunning: boolean;
   isPreparing: boolean;
   results: any;
+  mobileDrawerOpen: boolean;
+  onCloseMobileDrawer: () => void;
 }
 
 export default function Sidebar({
@@ -77,6 +79,8 @@ export default function Sidebar({
   isRunning,
   isPreparing,
   results,
+  mobileDrawerOpen,
+  onCloseMobileDrawer,
 }: SidebarProps) {
   const [dataMode, setDataMode] = useState<DataMode>('sample');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -99,15 +103,27 @@ export default function Sidebar({
     if (!uploadFile) return;
     if (!useLatLon && !locationName.trim()) return;
     if (useLatLon && latitude === 0 && longitude === 0) return;
-    await onUploadRun({
-      file: uploadFile,
-      locationName: useLatLon ? '' : locationName,
-      latitude: useLatLon ? latitude : 0,
-      longitude: useLatLon ? longitude : 0,
-      timestampColumn: timestampCol,
-      energyColumn: energyCol,
-      buildingName: buildingName,
-    });
+    try {
+      await onUploadRun({
+        file: uploadFile,
+        locationName: useLatLon ? '' : locationName,
+        latitude: useLatLon ? latitude : 0,
+        longitude: useLatLon ? longitude : 0,
+        timestampColumn: timestampCol,
+        energyColumn: energyCol,
+        buildingName: buildingName,
+      });
+    } finally {
+      onCloseMobileDrawer();
+    }
+  };
+
+  const handleSampleRun = async () => {
+    try {
+      await onRun();
+    } finally {
+      onCloseMobileDrawer();
+    }
   };
   const { data: cities = [] } = useQuery({
     queryKey: ['cities'],
@@ -208,10 +224,34 @@ export default function Sidebar({
   };
 
   return (
-    <div className="w-64 bg-[#1e1e2e] border-r border-[#2d2d44] h-screen overflow-y-auto fixed left-0 top-0 p-4">
+    <>
+      <div
+        className={`fixed inset-0 z-40 bg-black/60 transition-opacity md:hidden ${
+          mobileDrawerOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+        aria-hidden={!mobileDrawerOpen}
+        onClick={onCloseMobileDrawer}
+      />
+      <aside
+        className={`fixed top-0 left-0 z-50 h-[100dvh] w-[min(20rem,92vw)] max-w-sm overflow-y-auto border-r border-[#2d2d44] bg-[#1e1e2e] p-4 shadow-xl transition-transform duration-200 ease-out md:static md:z-0 md:block md:h-screen md:w-64 md:max-w-none md:shrink-0 md:translate-x-0 md:shadow-none ${
+          mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        } pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]`}
+      >
+      <div className="mb-4 flex items-center justify-between md:hidden">
+        <span className="text-sm font-semibold tracking-tight text-[#B6C2E2]">Analysis setup</span>
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={onCloseMobileDrawer}
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#2d2d44] bg-[#252540] text-gray-200 active:bg-[#2d2d55]"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
       {/* Status */}
       <div className="mb-6">
-        <div className="flex items-center gap-2 text-[#B6C2E2] text-sm font-semibold mb-2 pb-2 border-b border-[#2d2d44]">
+        <div className="flex min-h-[40px] items-center gap-2 text-[#B6C2E2] text-sm font-semibold mb-2 pb-2 border-b border-[#2d2d44]">
           <Activity className="w-4 h-4" />
           <span>Status</span>
         </div>
@@ -651,17 +691,17 @@ export default function Sidebar({
         </div>
         {dataMode === 'upload' ? (
           <button
-            onClick={handleUploadRun}
+            onClick={() => void handleUploadRun()}
             disabled={!uploadFile || (!useLatLon && !locationName.trim()) || (useLatLon && latitude === 0 && longitude === 0) || isRunning}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-all"
+            className="flex min-h-[44px] w-full items-center justify-center rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-3 text-sm font-semibold text-white transition-all hover:from-emerald-700 hover:to-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isRunning ? 'Analyzing...' : 'Upload & Analyze'}
           </button>
         ) : (
           <button
-            onClick={onRun}
+            onClick={() => void handleSampleRun()}
             disabled={!selectedCity || !selectedBuilding || isRunning}
-            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-2 px-4 rounded-lg transition-all"
+            className="flex min-h-[44px] w-full items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-3 text-sm font-semibold text-white transition-all hover:from-indigo-700 hover:to-purple-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isRunning ? 'Running...' : 'Run Anomaly Detection'}
           </button>
@@ -670,6 +710,7 @@ export default function Sidebar({
           <p className="text-xs text-gray-500 mt-2 text-center">Fetching weather data and running analysis...</p>
         )}
       </div>
-    </div>
+    </aside>
+    </>
   );
 }

@@ -3,7 +3,7 @@ import { Zap } from 'lucide-react';
 
 export default function HeroHeader() {
   return (
-    <div className="text-center py-10 px-4 relative">
+    <div className="relative hidden text-center py-10 px-4 md:block">
       <motion.div
         initial={{ opacity: 0, scale: 0.8 }}
         animate={{ opacity: 1, scale: 1 }}
