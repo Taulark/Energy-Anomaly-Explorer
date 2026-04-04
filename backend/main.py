@@ -820,37 +820,32 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
     import requests
     url = "https://api.open-meteo.com/v1/forecast"
     headers = {"User-Agent": "EnergyAnomalyExplorer/1.0 (forecast)"}
-    hourly_variants = [
-        "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
-        "temperature_2m,dew_point_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
-    ]
+    # Keep request small; Render proxies often cut requests ~100s — few retries, tight read timeout.
+    hourly = "temperature_2m,dew_point_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": hourly,
+        "forecast_days": min(max(days, 1), 16),
+        "timezone": "UTC",
+    }
     data = None
     last_err: Optional[str] = None
-    for hourly in hourly_variants:
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "hourly": hourly,
-            "forecast_days": min(days, 16),
-            "timezone": "UTC",
-        }
-        for attempt in range(4):
-            try:
-                r = requests.get(url, params=params, headers=headers, timeout=90)
-                if r.status_code == 429:
-                    time.sleep(3 + attempt * 4)
-                    last_err = "429 rate limit"
-                    continue
-                r.raise_for_status()
-                data = r.json()
-                last_err = None
-                break
-            except Exception as e:
-                last_err = str(e)
-                logger.warning("Open-Meteo forecast attempt %s/%s failed: %s", attempt + 1, hourly[:40], e)
-                time.sleep(1.5 * (attempt + 1))
-        if data is not None:
+    for attempt in range(3):
+        try:
+            r = requests.get(url, params=params, headers=headers, timeout=(10, 38))
+            if r.status_code == 429:
+                time.sleep(2 + attempt * 3)
+                last_err = "429 rate limit"
+                continue
+            r.raise_for_status()
+            data = r.json()
+            last_err = None
             break
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("Open-Meteo forecast attempt %s failed: %s", attempt + 1, e)
+            time.sleep(1.0 * (attempt + 1))
     if data is None:
         logger.warning("Open-Meteo forecast failed after retries: %s", last_err)
         return None
@@ -859,6 +854,8 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
         logger.warning("Open-Meteo forecast returned no hourly block (keys=%s)", list(data.keys())[:12])
         return None
     times = h["time"]
+    if not times:
+        return None
     df = pd.DataFrame({
         "hour_datetime": pd.to_datetime(times, utc=True).tz_localize(None),
         "Temperature": h.get("temperature_2m", [np.nan] * len(times)),
@@ -871,6 +868,100 @@ def download_weather_forecast_openmeteo(lat: float, lon: float, days: int = 7) -
     for c in ["Temperature", "Dew Point", "Clearsky GHI", "Cloud_Type", "Wind Speed", "Pressure"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
+
+
+def download_weather_forecast_metno(lat: float, lon: float, days: int = 7) -> Optional[pd.DataFrame]:
+    """
+    Fallback forecast from api.met.no (Locationforecast 2.0). Different provider than Open-Meteo;
+    often works when Open-Meteo is blocked or flaky from cloud hosts.
+    See https://api.met.no/doc/Locationforecast HowTO
+    """
+    import requests
+    import math
+
+    url = "https://api.met.no/weatherapi/locationforecast/2.0/complete.json"
+    headers = {
+        "User-Agent": "EnergyAnomalyExplorer/1.0 contact via https://github.com/Taulark/Energy-Anomaly-Explorer",
+    }
+    try:
+        r = requests.get(url, params={"lat": lat, "lon": lon}, headers=headers, timeout=(10, 45))
+        r.raise_for_status()
+        js = r.json()
+    except Exception as e:
+        logger.warning("MET Norway forecast request failed: %s", e)
+        return None
+
+    series = (js.get("properties") or {}).get("timeseries") or []
+    if not series:
+        logger.warning("MET Norway forecast: empty timeseries")
+        return None
+
+    rows = []
+    for entry in series:
+        t = entry.get("time")
+        details = ((entry.get("data") or {}).get("instant") or {}).get("details") or {}
+        if not t or not details:
+            continue
+        temp = details.get("air_temperature")
+        if temp is None:
+            continue
+        dt = pd.to_datetime(t, utc=True).tz_localize(None)
+        cloud = float(details.get("cloud_area_fraction") or 0.0)
+        w_ms = float(details.get("wind_speed") or 0.0)
+        wind_kmh = w_ms * 3.6  # Open-Meteo archive/forecast uses km/h for wind_speed_10m
+        p = details.get("air_pressure_at_sea_level")
+        pressure = float(p) if p is not None else 1013.25
+        dp = details.get("dew_point_temperature")
+        if dp is None:
+            rh = float(max(1.0, min(100.0, details.get("relative_humidity") or 50.0)))
+            a, b = 17.27, 237.7
+            alpha = ((a * float(temp)) / (b + float(temp))) + math.log(rh / 100.0)
+            dp = (b * alpha) / (a - alpha) if abs(a - alpha) > 1e-6 else float(temp) - 5.0
+        ghi = max(0.0, 980.0 * (1.0 - cloud / 100.0))
+        rows.append({
+            "hour_datetime": dt,
+            "Temperature": float(temp),
+            "Dew Point": float(dp),
+            "Clearsky GHI": ghi,
+            "Cloud_Type": min(12, max(0, int(round(cloud * 12 / 100)))),
+            "Wind Speed": wind_kmh,
+            "Pressure": pressure,
+        })
+
+    if len(rows) < 8:
+        logger.warning("MET Norway forecast: too few rows (%s)", len(rows))
+        return None
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values("hour_datetime").drop_duplicates(subset=["hour_datetime"], keep="first")
+    ndays = min(max(days, 1), 16)
+    t0 = df["hour_datetime"].iloc[0].floor("h")
+    hourly_idx = pd.date_range(start=t0, periods=ndays * 24, freq="h")
+    df = df.set_index("hour_datetime").reindex(hourly_idx)
+    df.index.name = "hour_datetime"
+    df = df.reset_index()
+    for c in ["Temperature", "Dew Point", "Clearsky GHI", "Wind Speed", "Pressure"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").interpolate(limit_direction="both")
+            df[c] = df[c].ffill().bfill()
+    if "Cloud_Type" in df.columns:
+        ct = pd.to_numeric(df["Cloud_Type"], errors="coerce").interpolate(limit_direction="both").ffill().bfill()
+        df["Cloud_Type"] = ct.round().clip(0, 12).fillna(0).astype(int)
+    if df[["Temperature", "Dew Point"]].isna().all().any():
+        return None
+    return df
+
+
+def fetch_forecast_weather(lat: float, lon: float, days: int = 7) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    """Try Open-Meteo first, then MET Norway."""
+    df = download_weather_forecast_openmeteo(lat, lon, days=days)
+    if df is not None and not df.empty:
+        return df, "OPEN_METEO"
+    df = download_weather_forecast_metno(lat, lon, days=days)
+    if df is not None and not df.empty:
+        logger.info("Using MET Norway for forecast weather (Open-Meteo unavailable).")
+        return df, "MET_NORWAY"
+    return None, None
 
 
 def resolve_city_coordinates(city_display: str) -> Tuple[float, float]:
@@ -2814,11 +2905,15 @@ async def get_forecast(request: ForecastRequest):
             raise HTTPException(status_code=400, detail={"error": "geocoding_failed", "message": str(e)})
 
     forecast_days = min(request.forecast_days, 16)
-    weather_df = download_weather_forecast_openmeteo(lat, lon, days=forecast_days)
+    weather_df, wx_src = fetch_forecast_weather(lat, lon, days=forecast_days)
     if weather_df is None or weather_df.empty:
         raise HTTPException(
-            status_code=500,
-            detail={"error": "weather_fetch_failed", "message": "Could not fetch forecast weather data."}
+            status_code=503,
+            detail={
+                "error": "weather_fetch_failed",
+                "message": "Could not fetch forecast weather (Open-Meteo and MET Norway both failed). "
+                "Check Render logs for upstream errors.",
+            },
         )
 
     missing_features = [f for f in features if f not in weather_df.columns]
@@ -2828,6 +2923,7 @@ async def get_forecast(request: ForecastRequest):
             detail={"error": "feature_mismatch", "message": f"Forecast weather missing features: {missing_features}"}
         )
 
+    weather_df = weather_df.reset_index(drop=True)
     X_forecast = weather_df[features].copy()
     X_forecast = X_forecast.ffill().bfill().fillna(0)
     X_scaled = scaler.transform(X_forecast.values)
@@ -2835,9 +2931,10 @@ async def get_forecast(request: ForecastRequest):
     predictions = np.maximum(predictions, 0)
 
     hourly_data = []
-    for i, row in weather_df.iterrows():
+    for idx in range(len(weather_df)):
+        row = weather_df.iloc[idx]
         dt = row["hour_datetime"]
-        pred = float(predictions[i])
+        pred = float(predictions[idx])
         hourly_data.append({
             "datetime": dt.isoformat(),
             "hour": dt.hour,
@@ -2875,6 +2972,7 @@ async def get_forecast(request: ForecastRequest):
         "city": request.city,
         "building": request.building,
         "forecast_days": forecast_days,
+        "forecast_weather_source": wx_src,
         "r2": r2,
         "residual_std": round(residual_std, 4),
         "hourly_forecast": hourly_data,

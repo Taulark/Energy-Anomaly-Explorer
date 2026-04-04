@@ -89,6 +89,9 @@ export default function ForecastTab({ results }: ForecastTabProps) {
   const dailySummary = forecast.daily_summary || [];
   const modelR2 = forecast.r2;
   const residualStd = forecast.residual_std;
+  const wxSource = forecast.forecast_weather_source as string | undefined;
+  const wxLabel =
+    wxSource === 'MET_NORWAY' ? 'MET Norway (fallback)' : wxSource === 'OPEN_METEO' ? 'Open-Meteo' : 'Open-Meteo / MET Norway';
 
   const chartData = hourlyData.map((h: any) => {
     const risk = getRiskLevel(h.temperature, h.ghi, avgTemp);
@@ -318,7 +321,7 @@ export default function ForecastTab({ results }: ForecastTabProps) {
       {/* Model Info Footer */}
       <div className="bg-[#1e1e2e] border border-[#2d2d44] rounded-lg p-3 flex items-center justify-between text-xs text-gray-500">
         <span>Model: ElasticNet &middot; Features: {forecast.model_features?.join(', ')}</span>
-        <span>Weather: Open-Meteo Forecast API &middot; {forecast.forecast_days}-day horizon</span>
+        <span>Weather: {wxLabel} &middot; {forecast.forecast_days}-day horizon</span>
       </div>
     </div>
   );
