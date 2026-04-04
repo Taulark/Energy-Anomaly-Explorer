@@ -591,10 +591,13 @@ def download_weather_openmeteo(
     """
     Download hourly weather from Open-Meteo Historical Archive API (no API key).
 
-    Large spans are requested in chunks: a single ~17-year hourly call often times out
-    or fails on cloud hosts (Render, etc.).
+    Chunks are required for long ranges. Defaults to a **low** parallel worker count
+    (2) to avoid 429/rate limits from cloud IPs (Render). If parallel fails, automatically
+    retries **sequentially**. Set OPENMETEO_MAX_WORKERS=1 to force sequential only, or
+    higher (e.g. 4) for faster runs when rate limits are not an issue.
     """
     import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     url = "https://archive-api.open-meteo.com/v1/archive"
     hourly = (
@@ -609,25 +612,36 @@ def download_weather_openmeteo(
         t0, t1 = t1, t0
 
     chunk_days = 1000
-    chunks: List[pd.DataFrame] = []
+    ranges: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
     chunk_start = t0
-
     while chunk_start <= t1:
         chunk_end = min(chunk_start + pd.Timedelta(days=chunk_days - 1), t1)
+        ranges.append((chunk_start, chunk_end))
+        chunk_start = chunk_end + pd.Timedelta(days=1)
+
+    def fetch_chunk(range_pair: Tuple[pd.Timestamp, pd.Timestamp]) -> Tuple[pd.Timestamp, Optional[pd.DataFrame]]:
+        cs, ce = range_pair
         params = {
             "latitude": lat,
             "longitude": lon,
-            "start_date": chunk_start.strftime("%Y-%m-%d"),
-            "end_date": chunk_end.strftime("%Y-%m-%d"),
+            "start_date": cs.strftime("%Y-%m-%d"),
+            "end_date": ce.strftime("%Y-%m-%d"),
             "hourly": hourly,
             "timezone": "UTC",
         }
         data = None
-        for attempt in range(3):
+        for attempt in range(4):
             try:
-                r = requests.get(url, params=params, headers=headers, timeout=180)
-                if r.status_code == 429 and attempt < 2:
-                    time.sleep(2.0 * (attempt + 1))
+                r = requests.get(url, params=params, headers=headers, timeout=240)
+                if r.status_code == 429:
+                    wait = 3.0 * (attempt + 1)
+                    logger.warning(
+                        "Open-Meteo 429 for %s–%s; sleeping %ss before retry",
+                        params["start_date"],
+                        params["end_date"],
+                        wait,
+                    )
+                    time.sleep(wait)
                     continue
                 if not r.ok:
                     logger.warning(
@@ -648,32 +662,79 @@ def download_weather_openmeteo(
                     attempt + 1,
                     e,
                 )
-                if attempt == 2:
-                    return None
-                time.sleep(1.0 * (attempt + 1))
+                if attempt == 3:
+                    return cs, None
+                time.sleep(1.5 * (attempt + 1))
 
-        if not data:
-            return None
-        if data.get("error"):
-            logger.warning("Open-Meteo archive error payload: %s", str(data)[:800])
-            return None
+        if not data or data.get("error"):
+            if data and data.get("error"):
+                logger.warning("Open-Meteo archive error payload: %s", str(data)[:800])
+            return cs, None
 
         h = data.get("hourly", {})
         part = _openmeteo_archive_hourly_to_df(h)
         if part is None or len(part) == 0:
-            logger.warning("Open-Meteo chunk %s–%s returned empty hourly data", params["start_date"], params["end_date"])
-            return None
-        chunks.append(part)
-        chunk_start = chunk_end + pd.Timedelta(days=1)
-        time.sleep(0.05)
+            logger.warning(
+                "Open-Meteo chunk %s–%s returned empty hourly data",
+                params["start_date"],
+                params["end_date"],
+            )
+            return cs, None
+        return cs, part
 
-    if not chunks:
-        return None
-    df = pd.concat(chunks, ignore_index=True)
-    df = df.drop_duplicates(subset=["hour_datetime"], keep="first")
-    df = df.sort_values("hour_datetime").reset_index(drop=True)
-    logger.info(f"Open-Meteo archive merged: {len(df)} rows from {len(chunks)} chunk(s)")
-    return df
+    def merge_ordered(chunk_list: List[Tuple[pd.Timestamp, pd.DataFrame]], label: str) -> Optional[pd.DataFrame]:
+        if not chunk_list:
+            return None
+        chunk_list.sort(key=lambda x: x[0])
+        parts = [p for _cs, p in chunk_list]
+        df = pd.concat(parts, ignore_index=True)
+        df = df.drop_duplicates(subset=["hour_datetime"], keep="first")
+        df = df.sort_values("hour_datetime").reset_index(drop=True)
+        logger.info("Open-Meteo archive merged (%s): %s rows from %s chunk(s)", label, len(df), len(parts))
+        return df
+
+    def try_sequential() -> Optional[pd.DataFrame]:
+        ordered: List[Tuple[pd.Timestamp, pd.DataFrame]] = []
+        for pair in ranges:
+            cs, part = fetch_chunk(pair)
+            if part is None:
+                logger.error("Open-Meteo sequential failed at %s–%s", pair[0], pair[1])
+                return None
+            ordered.append((cs, part))
+            time.sleep(0.2)
+        return merge_ordered(ordered, "sequential")
+
+    max_workers = int(os.getenv("OPENMETEO_MAX_WORKERS", "2"))
+    max_workers = max(1, min(max_workers, len(ranges)))
+
+    if max_workers <= 1:
+        return try_sequential()
+
+    results: List[Tuple[pd.Timestamp, pd.DataFrame]] = []
+    parallel_ok = True
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futs = [executor.submit(fetch_chunk, pair) for pair in ranges]
+        for fut in as_completed(futs):
+            try:
+                cs, part = fut.result()
+            except Exception as e:
+                logger.warning("Open-Meteo parallel future error: %s", e)
+                parallel_ok = False
+                break
+            if part is None:
+                parallel_ok = False
+                break
+            results.append((cs, part))
+
+    if parallel_ok and len(results) == len(ranges):
+        return merge_ordered(results, f"parallel workers={max_workers}")
+
+    logger.warning(
+        "Open-Meteo parallel download incomplete or failed (%s/%s chunks); retrying sequentially",
+        len(results),
+        len(ranges),
+    )
+    return try_sequential()
 
 def _cloud_cover_to_type(cloud_cover: list) -> list:
     """Map 0–100 cloud_cover to 0–12 Cloud_Type style."""
