@@ -125,7 +125,12 @@ export default function Sidebar({
       onCloseMobileDrawer();
     }
   };
-  const { data: cities = [] } = useQuery({
+  const {
+    data: cities = [],
+    isLoading: citiesLoading,
+    isError: citiesError,
+    error: citiesFetchError,
+  } = useQuery({
     queryKey: ['cities'],
     queryFn: api.getCities,
     staleTime: 1000 * 60 * 60 * 24,
@@ -233,8 +238,8 @@ export default function Sidebar({
         onClick={onCloseMobileDrawer}
       />
       <aside
-        className={`fixed top-0 left-0 z-50 h-[100dvh] w-[min(20rem,92vw)] max-w-sm overflow-y-auto border-r border-[#2d2d44] bg-[#1e1e2e] p-4 shadow-xl transition-transform duration-200 ease-out md:static md:z-0 md:block md:h-screen md:w-64 md:max-w-none md:shrink-0 md:translate-x-0 md:shadow-none ${
-          mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        className={`fixed top-0 left-0 z-50 h-[100dvh] w-[min(20rem,92vw)] max-w-sm overflow-y-auto border-r border-[#2d2d44] bg-[#1e1e2e] p-4 shadow-xl transition-transform duration-200 ease-out md:static md:z-0 md:block md:h-screen md:w-64 md:max-w-none md:shrink-0 md:translate-x-0 md:shadow-none md:transition-none ${
+          mobileDrawerOpen ? '' : '-translate-x-full'
         } pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]`}
       >
       <div className="mb-4 flex items-center justify-between md:hidden">
@@ -473,16 +478,23 @@ export default function Sidebar({
             <select
               value={selectedCity}
               onChange={handleCityChange}
-              disabled={isPreparing}
-              className="w-full bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isPreparing || citiesLoading}
+              className="w-full min-h-[44px] bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-base text-white focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-sm"
             >
-              <option value="">Select City</option>
+              <option value="">
+                {citiesLoading ? 'Loading cities…' : citiesError ? 'Could not load cities' : 'Select City'}
+              </option>
               {cities.map((city) => (
                 <option key={city} value={city}>
                   {city}
                 </option>
               ))}
             </select>
+            {citiesError && (
+              <div className="mt-2 text-xs text-red-400" role="alert">
+                {(citiesFetchError as any)?.message || 'Failed to load city list. Check connection / API URL.'}
+              </div>
+            )}
             {isPreparing && selectedCity && (
               <div className="mt-2 text-xs text-yellow-500">Fetching load profile (fast)...</div>
             )}
@@ -499,7 +511,7 @@ export default function Sidebar({
                 value={selectedBuilding}
                 onChange={handleBuildingChange}
                 disabled={isRunning || buildingsLoading || isPreparing}
-                className="w-full bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full min-h-[44px] bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-base text-white focus:outline-none focus:ring-2 focus:ring-blue-500 md:text-sm"
               >
                 <option value="">
                   {isPreparing ? 'Waiting for load profile...' : buildingsLoading ? 'Loading buildings...' : 'Select Building'}
@@ -564,7 +576,7 @@ export default function Sidebar({
               value={selectedYear}
               onChange={handleYearChange}
               disabled={isRunning || !selectedBuilding || yearsLoading || isPreparing}
-              className="w-full bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full min-h-[44px] bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-base text-white md:text-sm"
             >
               <option value="All">All</option>
               {years.map((year) => (
@@ -590,7 +602,7 @@ export default function Sidebar({
               value={featureMode}
               onChange={(e) => setFeatureMode(e.target.value)}
               disabled={isRunning}
-              className="w-full bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-sm text-white"
+              className="w-full min-h-[44px] bg-[#1e1e2e] border border-[#2d2d44] rounded-lg px-3 py-2 text-base text-white md:text-sm"
             >
               <option value="Auto-select (ElasticNet)">Auto-select (ElasticNet)</option>
               <option value="Auto-select (Correlation Top-K)">Auto-select (Correlation Top-K)</option>

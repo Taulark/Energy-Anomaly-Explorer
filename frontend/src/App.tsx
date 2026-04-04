@@ -44,16 +44,6 @@ function App() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    if (!mq.matches || !mobileMenuOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [mobileMenuOpen]);
-
   const handlePrepareCity = async (city: string) => {
     setIsPreparing(true);
     try {
