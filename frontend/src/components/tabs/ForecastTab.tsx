@@ -14,6 +14,14 @@ const TOOLTIP_STYLE = { backgroundColor: '#1e1e2e', border: '1px solid #2d2d44',
 const TOOLTIP_ITEM = { color: '#e2e8f0' };
 const TOOLTIP_LABEL = { color: '#94a3b8' };
 
+function formatForecastError(err: any): string {
+  const d = err?.response?.data?.detail;
+  if (typeof d === 'string') return d;
+  if (d && typeof d === 'object' && 'message' in d) return String((d as { message: string }).message);
+  if (Array.isArray(d)) return d.map((x: any) => x?.msg || JSON.stringify(x)).join('; ');
+  return err?.message || 'Forecast failed';
+}
+
 function getRiskLevel(temp: number, ghi: number, avgTemp: number): { level: string; color: string; score: number } {
   const tempDeviation = Math.abs(temp - avgTemp);
   let score = 0;
@@ -44,8 +52,7 @@ export default function ForecastTab({ results }: ForecastTabProps) {
     api.getForecast(city, building)
       .then((data) => { setForecast(data); setLoading(false); })
       .catch((err) => {
-        const msg = err?.response?.data?.detail?.message || err?.message || 'Forecast failed';
-        setError(msg); setLoading(false);
+        setError(formatForecastError(err)); setLoading(false);
       });
   }, [city, building]);
 

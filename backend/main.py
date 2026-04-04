@@ -2,7 +2,9 @@
 FastAPI backend for Energy Anomaly Explorer
 Reuses existing Python modules for data processing, regression, and anomaly detection.
 """
+import json
 import os
+import time
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -64,6 +66,90 @@ cache = {
     "anomaly_results": {},
     "model_cache": {},
 }
+
+# Disk-backed caches (helps Render cold starts and restarts; same instance disk only)
+CITIES_LIST_CACHE_FILE = PROJECT_ROOT / "data" / "cities_list_cache.json"
+CITIES_LIST_CACHE_TTL_SEC = 86400  # 24 hours — OpenEI city list is effectively static
+MODEL_DISK_CACHE_DIR = PROJECT_ROOT / "data" / "trained_models"
+
+
+def _try_load_cities_list_from_disk() -> Optional[List[str]]:
+    if not CITIES_LIST_CACHE_FILE.is_file():
+        return None
+    try:
+        with open(CITIES_LIST_CACHE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if time.time() - float(data.get("ts", 0)) > CITIES_LIST_CACHE_TTL_SEC:
+            return None
+        cities = data.get("cities")
+        return cities if isinstance(cities, list) else None
+    except Exception as e:
+        logger.warning(f"Could not read cities list cache: {e}")
+        return None
+
+
+def _save_cities_list_to_disk(city_names: List[str]) -> None:
+    try:
+        CITIES_LIST_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(CITIES_LIST_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"ts": time.time(), "cities": city_names}, f)
+    except Exception as e:
+        logger.warning(f"Could not write cities list cache: {e}")
+
+
+def _sanitize_for_filename(s: str, max_len: int = 100) -> str:
+    out = "".join(c if c.isalnum() or c in "._-" else "_" for c in (s or "").strip())
+    return out[:max_len] if out else "x"
+
+
+def _model_disk_cache_path(city: str, building: str) -> Path:
+    MODEL_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    c = _sanitize_for_filename(city, 120)
+    b = _sanitize_for_filename(building, 120)
+    return MODEL_DISK_CACHE_DIR / f"{c}__{b}.joblib"
+
+
+def persist_model_for_forecast(city: str, building: str, model_data: Dict[str, Any]) -> None:
+    try:
+        import joblib
+    except ImportError:
+        logger.warning("joblib not available; skipping forecast model disk persistence")
+        return
+    path = _model_disk_cache_path(city, building)
+    try:
+        payload = {
+            "model": model_data["model"],
+            "scaler": model_data["scaler"],
+            "features": model_data["features"],
+            "residual_std": float(model_data.get("residual_std", 0) or 0),
+            "r2": model_data.get("r2"),
+            "city": model_data.get("city", city),
+            "building": model_data.get("building", building),
+            "lat": model_data.get("lat"),
+            "lon": model_data.get("lon"),
+        }
+        joblib.dump(payload, path)
+        logger.info(f"Persisted forecast model to {path}")
+    except Exception as e:
+        logger.warning(f"Could not persist forecast model to {path}: {e}")
+
+
+def load_model_for_forecast_from_disk(city: str, building: str) -> Optional[Dict[str, Any]]:
+    try:
+        import joblib
+    except ImportError:
+        return None
+    path = _model_disk_cache_path(city, building)
+    if not path.is_file():
+        return None
+    try:
+        data = joblib.load(path)
+        if not isinstance(data, dict) or "model" not in data or "scaler" not in data:
+            return None
+        return data
+    except Exception as e:
+        logger.warning(f"Could not load forecast model from {path}: {e}")
+        return None
 
 # Request models
 class PrepareCityRequest(BaseModel):
@@ -1298,6 +1384,12 @@ async def get_cities() -> CityResponse:
     
     if cache["cities"] is not None:
         return CityResponse(cities=cache["cities"])
+
+    disk_cities = _try_load_cities_list_from_disk()
+    if disk_cities is not None:
+        cache["cities"] = disk_cities
+        logger.info(f"Loaded {len(disk_cities)} cities from disk cache")
+        return CityResponse(cities=disk_cities)
     
     if not MODULES_AVAILABLE:
         raise HTTPException(status_code=500, detail="OpenEI module not available")
@@ -1317,6 +1409,7 @@ async def get_cities() -> CityResponse:
         
         # Cache and return
         cache["cities"] = city_names
+        _save_cities_list_to_disk(city_names)
         logger.info(f"Successfully fetched {len(city_names)} cities")
         return CityResponse(cities=city_names)
         
@@ -1334,29 +1427,34 @@ async def prepare_city(request: PrepareCityRequest, background_tasks: Background
     Idempotent: returns already_prepared if merged file exists.
     """
     city = request.city
-    city_key = normalize_city_key(city)
-    
-    # Check if merged file already exists (idempotent)
+    canonical_key = get_canonical_city_key(city)
+    if not canonical_key:
+        return StatusResponse(
+            status="error",
+            message=f"Could not resolve OpenEI city key for '{city}'.",
+            ready=False
+        )
+    city_key = canonical_key.lower()
+
     merged_file_consistent = PROJECT_ROOT / "data" / "merged" / f"{city_key}_load_weather_merged.csv"
     merged_file_legacy = PROJECT_ROOT / f"{city_key}_load_weather_merged.csv"
-    
+
     if merged_file_consistent.exists() or merged_file_legacy.exists():
         return StatusResponse(
             status="already_prepared",
             message=f"Merged dataset already exists for {city}",
             ready=True
         )
-    
-    # Use ensure_city_prepared for consistency
-    merged_file = ensure_city_prepared(city)
-    
-    if merged_file is None:
+
+    merged_path, err_step, err_msg, _ws = ensure_city_prepared(city)
+
+    if merged_path is None:
         return StatusResponse(
             status="error",
-            message=f"Failed to prepare city {city}. Check logs for details.",
+            message=err_msg or f"Failed to prepare city {city} (step={err_step}).",
             ready=False
         )
-    
+
     return StatusResponse(
         status="prepared",
         message=f"Dataset prepared successfully for {city}",
@@ -1594,6 +1692,7 @@ async def run_analysis(request: RunRequest) -> Dict[str, Any]:
             "building": building,
         }
         logger.info(f"Cached model for forecast: {cache_key}")
+        persist_model_for_forecast(request.city, building, cache["model_cache"][cache_key])
     
     y_std = df[building].std() if building in df.columns else 0
     y_mean = df[building].mean() if building in df.columns else 0
@@ -1955,6 +2054,9 @@ async def upload_and_analyze(
             "message": "Provide a city/state name or latitude and longitude."
         })
 
+    loc_nm = (location_name or "").strip()
+    fc_city = loc_nm if loc_nm else f"{lat},{lon}"
+
     # --- 2. PARSE UPLOADED FILE ---
     try:
         contents = await file.read()
@@ -2086,6 +2188,7 @@ async def upload_and_analyze(
         })
 
     building = en_col
+    fc_building = building_name.strip() if building_name.strip() else building
     weather_source_used = "OPEN_METEO"
     rows_before_filter = len(df)
 
@@ -2140,19 +2243,20 @@ async def upload_and_analyze(
     r2 = metrics.get("r2")
 
     if fit_result.get("_model") and fit_result.get("_scaler"):
-        upload_cache_key = f"{location_name or f'{lat},{lon}'}|{building_name.strip() if building_name.strip() else building}"
+        upload_cache_key = f"{fc_city}|{fc_building}"
         cache["model_cache"][upload_cache_key] = {
             "model": fit_result["_model"],
             "scaler": fit_result["_scaler"],
             "features": selected_features,
             "residual_std": fit_result.get("_residual_std", 0),
             "r2": r2,
-            "city": location_name or f"{lat},{lon}",
-            "building": building_name.strip() if building_name.strip() else building,
+            "city": fc_city,
+            "building": fc_building,
             "lat": lat,
             "lon": lon,
         }
         logger.info(f"Cached upload model for forecast: {upload_cache_key}")
+        persist_model_for_forecast(fc_city, fc_building, cache["model_cache"][upload_cache_key])
 
     y_std = df[building].std()
     y_mean = df[building].mean()
@@ -2311,6 +2415,8 @@ async def upload_and_analyze(
         step = len(drilldown_data) // 5000
         drilldown_data = drilldown_data.iloc[::step].copy()
     response["drilldown_anomalies"] = drilldown_data.to_dict(orient="records")
+    response["city"] = fc_city
+    response["building"] = fc_building
 
     logger.info(f"Upload analysis complete: {anomaly_hours} anomalies ({anomaly_rate:.2f}%), "
                 f"R²={r2}, {len(top_anomalies_df)} top anomalies")
@@ -2331,6 +2437,11 @@ async def get_forecast(request: ForecastRequest):
     """
     cache_key = f"{request.city}|{request.building}"
     model_data = cache.get("model_cache", {}).get(cache_key)
+    if not model_data:
+        model_data = load_model_for_forecast_from_disk(request.city, request.building)
+        if model_data:
+            cache["model_cache"][cache_key] = model_data
+            logger.info(f"Loaded forecast model from disk: {cache_key}")
 
     if not model_data:
         raise HTTPException(

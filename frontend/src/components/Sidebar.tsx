@@ -112,6 +112,7 @@ export default function Sidebar({
   const { data: cities = [] } = useQuery({
     queryKey: ['cities'],
     queryFn: api.getCities,
+    staleTime: 1000 * 60 * 60 * 24,
   });
 
   const { data: buildings = [], isLoading: buildingsLoading, error: buildingsError } = useQuery<string[]>({
@@ -120,7 +121,8 @@ export default function Sidebar({
       console.log(`[Frontend] Fetching buildings for city: "${selectedCity}"`);
       return api.getBuildings(selectedCity);
     },
-    enabled: !!selectedCity && !isPreparing,
+    enabled: !!selectedCity,
+    staleTime: 1000 * 60 * 30,
     retry: 1,
     retryDelay: 2000,
   });

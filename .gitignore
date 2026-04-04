@@ -64,6 +64,8 @@ JMP_*
 *.zip
 *.jmp
 city_coords_cache.json
+data/cities_list_cache.json
+data/trained_models/
 corr_output.xlsx
 .Rhistory
 
