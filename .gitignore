@@ -55,8 +55,8 @@ sample_upload_*.csv
 # Capstone data (not needed for deployment - app fetches from APIs)
 Weather data/
 LoadProfiles/
-Chicago_*.csv
-Houston_*.csv
+/Chicago_*.csv
+/Houston_*.csv
 *_SimulatedLoadProfile.csv
 JMP_*
 *.xlsx
