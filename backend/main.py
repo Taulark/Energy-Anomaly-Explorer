@@ -565,46 +565,114 @@ def robust_parse_datetime(df: pd.DataFrame, city_key: str, merged_file: Path) ->
     
     return df, strategy_used, None
 
+def _openmeteo_archive_hourly_to_df(h: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    """Build weather DataFrame from Open-Meteo 'hourly' JSON object."""
+    if not h or "time" not in h:
+        return None
+    times = h["time"]
+    n = len(times)
+    df = pd.DataFrame({
+        "hour_datetime": pd.to_datetime(times, utc=True).tz_localize(None),
+        "Temperature": h.get("temperature_2m", [np.nan] * n),
+        "Dew Point": h.get("dew_point_2m", [np.nan] * n),
+        "Clearsky GHI": h.get("shortwave_radiation", [np.nan] * n),
+        "Cloud_Type": _cloud_cover_to_type(h.get("cloud_cover", [0] * n)),
+        "Wind Speed": h.get("wind_speed_10m", [np.nan] * n),
+        "Pressure": h.get("surface_pressure", [np.nan] * n),
+    })
+    for c in ["Temperature", "Dew Point", "Clearsky GHI", "Cloud_Type", "Wind Speed", "Pressure"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
+
+
 def download_weather_openmeteo(
     lat: float, lon: float, start_date: str = "1998-01-01", end_date: str = "2014-12-31"
 ) -> Optional[pd.DataFrame]:
     """
-    Download hourly weather from Open-Meteo Historical API (no API key).
-    Returns DataFrame with columns: hour_datetime, Temperature, Dew Point, Clearsky GHI, Cloud_Type.
+    Download hourly weather from Open-Meteo Historical Archive API (no API key).
+
+    Large spans are requested in chunks: a single ~17-year hourly call often times out
+    or fails on cloud hosts (Render, etc.).
     """
     import requests
+
     url = "https://archive-api.open-meteo.com/v1/archive"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "start_date": start_date,
-        "end_date": end_date,
-        "hourly": "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,surface_pressure,cloud_cover,shortwave_radiation",
-        "timezone": "UTC",
-    }
-    try:
-        r = requests.get(url, params=params, timeout=120)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        logger.warning(f"Open-Meteo request failed: {e}")
+    hourly = (
+        "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,"
+        "surface_pressure,cloud_cover,shortwave_radiation"
+    )
+    headers = {"User-Agent": "EnergyAnomalyExplorer/1.0 (research; contact via GitHub Taulark/Energy-Anomaly-Explorer)"}
+
+    t0 = pd.Timestamp(start_date).normalize()
+    t1 = pd.Timestamp(end_date).normalize()
+    if t0 > t1:
+        t0, t1 = t1, t0
+
+    chunk_days = 370
+    chunks: List[pd.DataFrame] = []
+    chunk_start = t0
+
+    while chunk_start <= t1:
+        chunk_end = min(chunk_start + pd.Timedelta(days=chunk_days - 1), t1)
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": chunk_start.strftime("%Y-%m-%d"),
+            "end_date": chunk_end.strftime("%Y-%m-%d"),
+            "hourly": hourly,
+            "timezone": "UTC",
+        }
+        data = None
+        for attempt in range(3):
+            try:
+                r = requests.get(url, params=params, headers=headers, timeout=180)
+                if r.status_code == 429 and attempt < 2:
+                    time.sleep(2.0 * (attempt + 1))
+                    continue
+                if not r.ok:
+                    logger.warning(
+                        "Open-Meteo archive HTTP %s for %s–%s: %s",
+                        r.status_code,
+                        params["start_date"],
+                        params["end_date"],
+                        (r.text or "")[:600],
+                    )
+                    r.raise_for_status()
+                data = r.json()
+                break
+            except Exception as e:
+                logger.warning(
+                    "Open-Meteo chunk %s–%s attempt %s failed: %s",
+                    params["start_date"],
+                    params["end_date"],
+                    attempt + 1,
+                    e,
+                )
+                if attempt == 2:
+                    return None
+                time.sleep(1.0 * (attempt + 1))
+
+        if not data:
+            return None
+        if data.get("error"):
+            logger.warning("Open-Meteo archive error payload: %s", str(data)[:800])
+            return None
+
+        h = data.get("hourly", {})
+        part = _openmeteo_archive_hourly_to_df(h)
+        if part is None or len(part) == 0:
+            logger.warning("Open-Meteo chunk %s–%s returned empty hourly data", params["start_date"], params["end_date"])
+            return None
+        chunks.append(part)
+        chunk_start = chunk_end + pd.Timedelta(days=1)
+        time.sleep(0.35)
+
+    if not chunks:
         return None
-    h = data.get("hourly", {})
-    if not h or "time" not in h:
-        logger.warning("Open-Meteo returned no hourly data")
-        return None
-    times = h["time"]
-    df = pd.DataFrame({
-        "hour_datetime": pd.to_datetime(times, utc=True).tz_localize(None),
-        "Temperature": h.get("temperature_2m", [np.nan] * len(times)),
-        "Dew Point": h.get("dew_point_2m", [np.nan] * len(times)),
-        "Clearsky GHI": h.get("shortwave_radiation", [np.nan] * len(times)),
-        "Cloud_Type": _cloud_cover_to_type(h.get("cloud_cover", [0] * len(times))),
-        "Wind Speed": h.get("wind_speed_10m", [np.nan] * len(times)),
-        "Pressure": h.get("surface_pressure", [np.nan] * len(times)),
-    })
-    for c in ["Temperature", "Dew Point", "Clearsky GHI", "Cloud_Type", "Wind Speed", "Pressure"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = pd.concat(chunks, ignore_index=True)
+    df = df.drop_duplicates(subset=["hour_datetime"], keep="first")
+    df = df.sort_values("hour_datetime").reset_index(drop=True)
+    logger.info(f"Open-Meteo archive merged: {len(df)} rows from {len(chunks)} chunk(s)")
     return df
 
 def _cloud_cover_to_type(cloud_cover: list) -> list:
