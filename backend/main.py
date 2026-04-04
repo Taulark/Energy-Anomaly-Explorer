@@ -587,21 +587,27 @@ def _openmeteo_archive_hourly_to_df(h: Dict[str, Any]) -> Optional[pd.DataFrame]
 
 def download_weather_openmeteo(
     lat: float, lon: float, start_date: str = "1998-01-01", end_date: str = "2014-12-31"
-) -> Optional[pd.DataFrame]:
+) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Download hourly weather from Open-Meteo Historical Archive API (no API key).
 
-    Chunks are required for long ranges. Defaults to a **low** parallel worker count
-    (2) to avoid 429/rate limits from cloud IPs (Render). If parallel fails, automatically
-    retries **sequentially**. Set OPENMETEO_MAX_WORKERS=1 to force sequential only, or
-    higher (e.g. 4) for faster runs when rate limits are not an issue.
+    Open-Meteo applies *query weight* to long ranges and many variables; cloud IPs
+    (Render) often hit 429 if chunks are too large or too concurrent. We default to:
+    small chunks (~120 days), fewer hourly variables (no humidity — unused in merge),
+    sequential requests with a pause between chunks.
+
+    Env overrides:
+    - OPENMETEO_CHUNK_DAYS (default 120)
+    - OPENMETEO_INTER_CHUNK_SLEEP (default 2.5 seconds)
+    - OPENMETEO_MAX_WORKERS (default 1 = sequential; try 2–3 only if stable)
     """
     import requests
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     url = "https://archive-api.open-meteo.com/v1/archive"
+    # Omit relative_humidity_2m — not used downstream; lowers API weight per call.
     hourly = (
-        "temperature_2m,dew_point_2m,relative_humidity_2m,wind_speed_10m,"
+        "temperature_2m,dew_point_2m,wind_speed_10m,"
         "surface_pressure,cloud_cover,shortwave_radiation"
     )
     headers = {"User-Agent": "EnergyAnomalyExplorer/1.0 (research; contact via GitHub Taulark/Energy-Anomaly-Explorer)"}
@@ -611,7 +617,9 @@ def download_weather_openmeteo(
     if t0 > t1:
         t0, t1 = t1, t0
 
-    chunk_days = 1000
+    chunk_days = max(30, min(366, int(os.getenv("OPENMETEO_CHUNK_DAYS", "150"))))
+    inter_chunk_sleep = float(os.getenv("OPENMETEO_INTER_CHUNK_SLEEP", "1.5"))
+
     ranges: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
     chunk_start = t0
     while chunk_start <= t1:
@@ -619,7 +627,17 @@ def download_weather_openmeteo(
         ranges.append((chunk_start, chunk_end))
         chunk_start = chunk_end + pd.Timedelta(days=1)
 
-    def fetch_chunk(range_pair: Tuple[pd.Timestamp, pd.Timestamp]) -> Tuple[pd.Timestamp, Optional[pd.DataFrame]]:
+    logger.info(
+        "Open-Meteo archive: %s chunks (~%s days each), lat=%.4f lon=%.4f",
+        len(ranges),
+        chunk_days,
+        lat,
+        lon,
+    )
+
+    def fetch_chunk(
+        range_pair: Tuple[pd.Timestamp, pd.Timestamp],
+    ) -> Tuple[pd.Timestamp, Optional[pd.DataFrame], Optional[str]]:
         cs, ce = range_pair
         params = {
             "latitude": lat,
@@ -630,31 +648,31 @@ def download_weather_openmeteo(
             "timezone": "UTC",
         }
         data = None
-        for attempt in range(4):
+        last_err: Optional[str] = None
+        for attempt in range(8):
             try:
-                r = requests.get(url, params=params, headers=headers, timeout=240)
+                r = requests.get(url, params=params, headers=headers, timeout=300)
                 if r.status_code == 429:
-                    wait = 3.0 * (attempt + 1)
+                    wait = min(90.0, 8.0 * (2 ** min(attempt, 4)))
                     logger.warning(
-                        "Open-Meteo 429 for %s–%s; sleeping %ss before retry",
+                        "Open-Meteo 429 for %s–%s; sleeping %.ss (attempt %s)",
                         params["start_date"],
                         params["end_date"],
                         wait,
+                        attempt + 1,
                     )
                     time.sleep(wait)
+                    last_err = "HTTP 429 Too Many Requests (rate limit — try again later or set NSRDB env vars)"
                     continue
                 if not r.ok:
-                    logger.warning(
-                        "Open-Meteo archive HTTP %s for %s–%s: %s",
-                        r.status_code,
-                        params["start_date"],
-                        params["end_date"],
-                        (r.text or "")[:600],
-                    )
+                    snippet = (r.text or "")[:500]
+                    last_err = f"HTTP {r.status_code} for {params['start_date']}–{params['end_date']}: {snippet}"
+                    logger.warning("Open-Meteo archive %s", last_err)
                     r.raise_for_status()
                 data = r.json()
                 break
             except Exception as e:
+                last_err = str(e)
                 logger.warning(
                     "Open-Meteo chunk %s–%s attempt %s failed: %s",
                     params["start_date"],
@@ -662,49 +680,60 @@ def download_weather_openmeteo(
                     attempt + 1,
                     e,
                 )
-                if attempt == 3:
-                    return cs, None
-                time.sleep(1.5 * (attempt + 1))
+                if attempt == 7:
+                    return cs, None, last_err
+                time.sleep(min(30.0, 2.0 * (attempt + 1)))
 
-        if not data or data.get("error"):
-            if data and data.get("error"):
-                logger.warning("Open-Meteo archive error payload: %s", str(data)[:800])
-            return cs, None
+        if not data:
+            return cs, None, last_err or "empty response"
+        if data.get("error") or data.get("reason"):
+            reason = data.get("reason") or data.get("error") or str(data)[:500]
+            logger.warning("Open-Meteo archive error payload: %s", str(data)[:800])
+            return cs, None, str(reason)
 
         h = data.get("hourly", {})
         part = _openmeteo_archive_hourly_to_df(h)
         if part is None or len(part) == 0:
-            logger.warning(
-                "Open-Meteo chunk %s–%s returned empty hourly data",
-                params["start_date"],
-                params["end_date"],
-            )
-            return cs, None
-        return cs, part
+            msg = f"empty hourly data for {params['start_date']}–{params['end_date']}"
+            logger.warning("Open-Meteo chunk %s", msg)
+            return cs, None, msg
+        return cs, part, None
 
-    def merge_ordered(chunk_list: List[Tuple[pd.Timestamp, pd.DataFrame]], label: str) -> Optional[pd.DataFrame]:
+    def merge_ordered(
+        chunk_list: List[Tuple[pd.Timestamp, pd.DataFrame]], label: str
+    ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
         if not chunk_list:
-            return None
+            return None, "no chunks"
         chunk_list.sort(key=lambda x: x[0])
         parts = [p for _cs, p in chunk_list]
         df = pd.concat(parts, ignore_index=True)
         df = df.drop_duplicates(subset=["hour_datetime"], keep="first")
         df = df.sort_values("hour_datetime").reset_index(drop=True)
-        logger.info("Open-Meteo archive merged (%s): %s rows from %s chunk(s)", label, len(df), len(parts))
-        return df
+        logger.info(
+            "Open-Meteo archive merged (%s): %s rows from %s chunk(s)",
+            label,
+            len(df),
+            len(parts),
+        )
+        return df, None
 
-    def try_sequential() -> Optional[pd.DataFrame]:
+    def try_sequential() -> Tuple[Optional[pd.DataFrame], Optional[str]]:
         ordered: List[Tuple[pd.Timestamp, pd.DataFrame]] = []
-        for pair in ranges:
-            cs, part = fetch_chunk(pair)
+        for i, pair in enumerate(ranges):
+            cs, part, err = fetch_chunk(pair)
             if part is None:
-                logger.error("Open-Meteo sequential failed at %s–%s", pair[0], pair[1])
-                return None
+                detail = (
+                    err
+                    or f"chunk {i + 1}/{len(ranges)} failed ({pair[0].date()}–{pair[1].date()})"
+                )
+                logger.error("Open-Meteo sequential failed: %s", detail)
+                return None, detail
             ordered.append((cs, part))
-            time.sleep(0.2)
+            if i < len(ranges) - 1:
+                time.sleep(inter_chunk_sleep)
         return merge_ordered(ordered, "sequential")
 
-    max_workers = int(os.getenv("OPENMETEO_MAX_WORKERS", "2"))
+    max_workers = int(os.getenv("OPENMETEO_MAX_WORKERS", "1"))
     max_workers = max(1, min(max_workers, len(ranges)))
 
     if max_workers <= 1:
@@ -712,27 +741,33 @@ def download_weather_openmeteo(
 
     results: List[Tuple[pd.Timestamp, pd.DataFrame]] = []
     parallel_ok = True
+    parallel_err: Optional[str] = None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futs = [executor.submit(fetch_chunk, pair) for pair in ranges]
         for fut in as_completed(futs):
             try:
-                cs, part = fut.result()
+                cs, part, err = fut.result()
             except Exception as e:
                 logger.warning("Open-Meteo parallel future error: %s", e)
                 parallel_ok = False
+                parallel_err = str(e)
                 break
             if part is None:
                 parallel_ok = False
+                parallel_err = err or "unknown chunk failure"
                 break
             results.append((cs, part))
 
     if parallel_ok and len(results) == len(ranges):
-        return merge_ordered(results, f"parallel workers={max_workers}")
+        merged, merr = merge_ordered(results, f"parallel workers={max_workers}")
+        if merged is not None:
+            return merged, merr
 
     logger.warning(
-        "Open-Meteo parallel download incomplete or failed (%s/%s chunks); retrying sequentially",
+        "Open-Meteo parallel incomplete (%s/%s): %s; retrying sequential",
         len(results),
         len(ranges),
+        parallel_err,
     )
     return try_sequential()
 
@@ -1079,9 +1114,20 @@ def ensure_city_prepared(city_display: str) -> Tuple[Optional[Path], Optional[st
             if weather_df is None:
                 coords = resolve_city_coordinates(city_display)
                 lat, lon = coords[0], coords[1]
-                weather_df = download_weather_openmeteo(lat, lon, "1998-01-01", "2014-12-31")
+                weather_df, openmeteo_err = download_weather_openmeteo(
+                    lat, lon, "1998-01-01", "2014-12-31"
+                )
                 if weather_df is None or len(weather_df) == 0:
-                    error_msg = "Weather download failed (NSRDB creds missing and Open-Meteo fallback failed)."
+                    error_msg = (
+                        "Weather download failed: NSRDB is not configured on the server and Open-Meteo "
+                        "did not return usable data."
+                    )
+                    if openmeteo_err:
+                        error_msg += f" Open-Meteo detail: {openmeteo_err}"
+                    error_msg += (
+                        " For production reliability, set NSRDB_API_KEY and NSRDB_EMAIL "
+                        "in Render environment variables (NREL API)."
+                    )
                     logger.error(error_msg)
                     return None, "weather", error_msg, None
                 weather_source_used = "OPEN_METEO"
@@ -2323,12 +2369,17 @@ async def upload_and_analyze(
     end_date = df_clean['hour_datetime'].max().strftime('%Y-%m-%d')
     logger.info(f"Fetching weather: ({lat}, {lon}), {start_date} to {end_date}")
 
-    weather_df = download_weather_openmeteo(lat, lon, start_date, end_date)
+    weather_df, openmeteo_err = download_weather_openmeteo(lat, lon, start_date, end_date)
     if weather_df is None or len(weather_df) == 0:
+        msg = (
+            "Could not fetch weather from Open-Meteo for your location and date range "
+            "(dates must fall within Open-Meteo archive coverage)."
+        )
+        if openmeteo_err:
+            msg += f" Detail: {openmeteo_err}"
         raise HTTPException(status_code=502, detail={
             "error": "weather_fetch_failed",
-            "message": "Could not fetch weather data from Open-Meteo for your location and date range. "
-                       "Ensure dates are between 1940 and a few days ago."
+            "message": msg,
         })
     logger.info(f"Weather data: {len(weather_df)} rows, {start_date} to {end_date}")
 
